@@ -22,7 +22,9 @@ python -m evo_geo
 - Every existing vertex receives exactly one bounded action.
 - IDs are monotonic; replication requests are processed in canonical request-ID order.
 - Undirected graph edges use hysteresis: add at distance <= 0.9, remove at distance >= 1.1.
-- Events use canonical JSON and SHA-256 chaining; checkpoints are state-hashed.
+- Events use canonical JSON and SHA-256 chaining; checkpoints are state-hashed and bound to the matching committed snapshot.
+- Archive schema v2 stores the exact execution contract; verification and replay validate state under that contract and audit event semantics against committed snapshots.
+- POSIX persistence fsyncs the temporary file, atomically replaces the destination, then fsyncs the containing directory. A failure after replacement can leave the new archive visible while crash durability remains uncertain; reopen and verify rather than assuming the old file survived.
 - Invalid inputs must not mutate live state or append events.
 
 See [SPEC.md](SPEC.md) for normative behavior and [docs/VALIDATION.md](docs/VALIDATION.md) for test scope and limitations. Passing tests validate only tested properties; they do not prove AGI, general learning, or physical realism.
