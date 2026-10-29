@@ -531,3 +531,84 @@ class TrustConcurrencyHardeningTests(unittest.TestCase):
             recovered = Archive.load(p)
             self.assertEqual(recovered.events, e.archive.events)
             self.assertEqual(recovered.checkpoints, e.archive.checkpoints)
+
+
+    def test_two_process_compare_and_swap_allows_exactly_one_writer(self):
+        import hashlib, subprocess, sys
+        e = Engine(contract=Contract(checkpoint_interval=1))
+        e.step(zero(e.state))
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            path = root / "archive.json"
+            e.archive.save_atomic(path, expected_current_sha256="missing")
+            expected = hashlib.sha256(path.read_bytes()).hexdigest()
+            script = r"""
+import hashlib, os, sys, time
+from pathlib import Path
+from evo_geo import Archive, Engine, StepInputs
+from evo_geo.core import state_from_dict
+path, expected, extra_steps, barrier = sys.argv[1], sys.argv[2], int(sys.argv[3]), Path(sys.argv[4])
+a = Archive.load(path)
+last = next(e for e in reversed(a.events) if e["type"] == "STEP_COMMITTED")
+eng = Engine(state=state_from_dict(last["data"]["state"]), contract=a.contract, archive=a)
+for _ in range(extra_steps):
+    eng.step(StepInputs({i:(0,0) for i in eng.state.vertices}, []))
+(barrier / str(extra_steps)).write_text("ready")
+deadline = time.monotonic() + 10
+while len(list(barrier.glob("*"))) < 2:
+    if time.monotonic() > deadline: raise SystemExit(9)
+    time.sleep(0.01)
+try:
+    eng.archive.save_atomic(path, expected_current_sha256=expected)
+except RuntimeError as exc:
+    if "stale overwrite" not in str(exc): raise
+    raise SystemExit(3)
+raise SystemExit(0)
+"""
+            procs = [
+                subprocess.Popen([sys.executable, "-c", script, str(path), expected, str(n), str(root)])
+                for n in (1, 2)
+            ]
+            codes = [p.wait(timeout=20) for p in procs]
+            self.assertEqual(sorted(codes), [0, 3])
+            restored = Archive.load(path)
+            self.assertTrue(restored.verify())
+            committed = [x for x in restored.events if x["type"] == "STEP_COMMITTED"]
+            self.assertIn(len(committed), (2, 3))
+
+    def test_stale_temp_files_are_cleaned_on_next_cooperative_save(self):
+        import hashlib
+        e = Engine(contract=Contract(checkpoint_interval=1))
+        e.step(zero(e.state))
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "archive.json"
+            e.archive.save_atomic(path, expected_current_sha256="missing")
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            debris = Path(td) / ".archive.json.abandoned.tmp"
+            debris.write_bytes(b"partial write")
+            e.archive.save_atomic(path, expected_current_sha256=digest)
+            self.assertFalse(debris.exists())
+            self.assertTrue(Archive.load(path).verify())
+            self.assertTrue((Path(td) / "archive.json.lock").exists())
+
+    def test_compare_and_swap_rejects_malformed_expected_digest(self):
+        e = Engine()
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "archive.json"
+            with self.assertRaisesRegex(ValueError, "lowercase SHA-256"):
+                e.archive.save_atomic(path, expected_current_sha256="not-a-digest")
+
+    @unittest.skipUnless(__import__("os").name == "posix" and hasattr(__import__("os"), "O_NOFOLLOW"),
+                         "symlink lock rejection requires POSIX O_NOFOLLOW")
+    def test_archive_lock_rejects_symlink_path(self):
+        import os
+        from evo_geo.core import _exclusive_path_lock
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            target = root / "target"
+            target.write_bytes(b"x")
+            link = root / "archive.json.lock"
+            link.symlink_to(target)
+            with self.assertRaises(OSError):
+                with _exclusive_path_lock(link):
+                    pass
