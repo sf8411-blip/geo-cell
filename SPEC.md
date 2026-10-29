@@ -19,7 +19,7 @@ For each unordered pair in ascending ID order: add absent edge when d² <= 0.9²
 Requests are sorted by nonempty request ID. Duplicate IDs with different payloads reject the whole step before mutation. Matching previously processed requests are idempotent. Unknown parent, invalid radius, out-of-range coordinates, or duplicate position yield a recorded rejection. Accepted IDs use the monotonic counter; new vertices do not move during their birth step.
 
 ## Transaction and audit
-Candidate state is validated before commit. The full event bundle is hash-chained using SHA-256 over canonical JSON including previous_hash but excluding event_hash. Checkpoints hash serialized state. Atomic archive persistence writes a same-directory temporary file, fsyncs it, then replaces the destination. This is not a digital signature and does not authenticate event authorship.
+Candidate state is validated before commit. Each step records its start snapshot, the execution contract, semantic events, and a committed state snapshot. The full event bundle is hash-chained using SHA-256 over canonical JSON including previous_hash but excluding event_hash; verification checks event structure and transition deltas against start/committed snapshots. Checkpoints hash serialized state and must match the same-step committed snapshot. Archive schema v2 persists the exact contract. Persistence writes and fsyncs a same-directory temporary file, atomically replaces the destination, and fsyncs the parent directory on POSIX. This is not a digital signature and does not authenticate event authorship.
 
 ## Explicit non-goals
 No claims about AGI, consciousness, general learning, biological fidelity, quantum effects, emergent semantics, or scalability follow from this contract.
