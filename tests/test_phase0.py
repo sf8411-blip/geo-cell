@@ -113,13 +113,13 @@ class AdversarialPhase0Tests(unittest.TestCase):
         cp["state"]=dict(cp["state"])
         cp["state"]["step"]=0
         cp["state_hash"]=__import__("evo_geo.core",fromlist=["sha256_hex"]).sha256_hex(canonical_bytes(cp["state"]))
-        self.assertFalse((lambda a: a.verify())(self._archive_with(e.archive.events,cp)))
+        self.assertFalse((lambda a: a.verify())(self._archive_with(e.archive.events,cp,e.archive.contract)))
         with self.assertRaises(ValueError):
             replay_from_checkpoint(cp,e.archive.events,1)
 
     @staticmethod
-    def _archive_with(events, checkpoint):
-        a=Archive(); a.events=events; a.checkpoints={checkpoint["step"]:checkpoint}; return a
+    def _archive_with(events, checkpoint, contract=None):
+        a=Archive(contract=contract); a.events=events; a.checkpoints={checkpoint["step"]:checkpoint}; return a
 
     def test_malformed_snapshot_rehashed_is_rejected(self):
         e=Engine()
