@@ -424,7 +424,7 @@ class Archive:
             request_ids=[e["data"]["request_id"] for e in replication_events]
             if request_ids!=sorted(request_ids) or len(request_ids)!=len(set(request_ids)):
                 return False
-            working_positions={(v.x,v.y) for v in start_vertices.values()}
+            working_positions={(state_vertices[i].x,state_vertices[i].y) for i in start_vertices}
             expected_child_id=start_state.next_vertex_id
             for event in replication_events:
                 data=event["data"]; rid=data["request_id"]; payload=data["payload"]
