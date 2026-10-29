@@ -1,34 +1,50 @@
 """Phase 0 deterministic integer-lattice engine; no runtime dependencies."""
 from __future__ import annotations
-import hashlib, json, os, tempfile, contextlib
+import hashlib, json, os, tempfile, contextlib, stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
 @contextlib.contextmanager
 def _exclusive_path_lock(lock_path):
-    """Advisory process lock; lock file is persistent and must not be deleted by callers."""
+    """Acquire a cooperative process lock on a persistent regular lock file.
+
+    The lock file must not be deleted or replaced while clients may use it: doing so
+    can split writers across different inodes. O_NOFOLLOW is used where available to
+    reject symlink lock paths. Locks remain advisory and filesystem-dependent.
+    """
     lock_path = Path(lock_path)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock_path, "a+b") as lock_file:
-        if os.name == "nt":
-            import msvcrt
-            lock_file.seek(0, os.SEEK_END)
-            if lock_file.tell() == 0:
-                lock_file.write(b"\\0"); lock_file.flush()
-            lock_file.seek(0)
-            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
-            try:
-                yield
-            finally:
+    flags = os.O_CREAT | os.O_RDWR
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(lock_path, flags, 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("archive lock path must be a regular file")
+        with os.fdopen(fd, "r+b", closefd=False) as lock_file:
+            if os.name == "nt":
+                import msvcrt
+                lock_file.seek(0, os.SEEK_END)
+                if lock_file.tell() == 0:
+                    lock_file.write(b"\\x00")
+                    lock_file.flush()
+                    os.fsync(lock_file.fileno())
                 lock_file.seek(0)
-                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                try:
+                    yield
+                finally:
+                    lock_file.seek(0)
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 def canonical_bytes(obj):
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
@@ -540,17 +556,27 @@ class Archive:
         """
         dest = Path(path)
         dest.parent.mkdir(parents=True, exist_ok=True)
+        if expected_current_sha256 is not None and expected_current_sha256 != "missing":
+            if (not isinstance(expected_current_sha256, str) or len(expected_current_sha256) != 64
+                    or any(ch not in "0123456789abcdef" for ch in expected_current_sha256)):
+                raise ValueError("expected_current_sha256 must be 'missing' or a lowercase SHA-256 digest")
         payload = {"schema_version": 2, "contract": contract_to_dict(self.contract),
                    "events": self.events, "checkpoints": {str(k): v for k, v in sorted(self.checkpoints.items())}}
         lock_path = dest.with_name(dest.name + ".lock")
         with _exclusive_path_lock(lock_path):
             if expected_current_sha256 is not None:
-                if dest.exists():
+                try:
                     current = sha256_hex(dest.read_bytes())
-                else:
+                except FileNotFoundError:
                     current = "missing"
                 if current != expected_current_sha256:
                     raise RuntimeError("archive changed since it was read; refusing stale overwrite")
+            # Recover debris left by a hard process exit. The stable lock must remain.
+            for stale_tmp in dest.parent.glob("." + dest.name + ".*.tmp"):
+                try:
+                    stale_tmp.unlink()
+                except FileNotFoundError:
+                    pass
             fd, tmp = tempfile.mkstemp(prefix="." + dest.name + ".", suffix=".tmp", dir=dest.parent)
             try:
                 with os.fdopen(fd, "wb") as f:
