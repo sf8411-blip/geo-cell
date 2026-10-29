@@ -465,3 +465,65 @@ class AdversarialPhase0Tests(unittest.TestCase):
             # A hard process exit can leave an uncommitted temporary file.
             self.assertTrue(any(x.name.endswith(".tmp") for x in Path(td).iterdir()))
 
+
+
+class TrustConcurrencyHardeningTests(unittest.TestCase):
+    def test_genesis_anchor_requires_external_expected_digest(self):
+        import hashlib
+        e = Engine()
+        e.step(zero(e.state))
+        genesis = next(x for x in e.archive.events if x["type"] == "STEP_STARTED")["data"]["start_state"]
+        expected = hashlib.sha256(canonical_bytes(genesis)).hexdigest()
+        self.assertTrue(e.archive.verify_genesis_anchor(expected))
+        self.assertFalse(e.archive.verify_genesis_anchor("0" * 64))
+        self.assertFalse(e.archive.verify_genesis_anchor("not-a-digest"))
+        # An archive without a recorded step has no genesis snapshot to anchor.
+        self.assertFalse(Archive().verify_genesis_anchor(expected))
+
+    def test_atomic_save_compare_and_swap_rejects_stale_writer(self):
+        import hashlib
+        e = Engine(contract=Contract(checkpoint_interval=1))
+        e.step(zero(e.state))
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "archive.json"
+            e.archive.save_atomic(p, expected_current_sha256="missing")
+            old_bytes = p.read_bytes()
+            old_digest = hashlib.sha256(old_bytes).hexdigest()
+
+            newer = Engine(contract=Contract(checkpoint_interval=1))
+            newer.step(zero(newer.state))
+            newer.step(zero(newer.state))
+            newer.archive.save_atomic(p, expected_current_sha256=old_digest)
+            new_bytes = p.read_bytes()
+            self.assertNotEqual(new_bytes, old_bytes)
+
+            # A second writer holding a stale view cannot replace the newer version.
+            with self.assertRaisesRegex(RuntimeError, "stale overwrite"):
+                e.archive.save_atomic(p, expected_current_sha256=old_digest)
+            self.assertEqual(p.read_bytes(), new_bytes)
+            self.assertTrue(Archive.load(p).verify())
+
+    def test_process_crash_after_replace_keeps_new_archive_parseable(self):
+        import os, subprocess, sys
+        if os.name != "posix":
+            self.skipTest("test uses POSIX fsync ordering")
+        e = Engine(contract=Contract(checkpoint_interval=1))
+        e.step(zero(e.state))
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "archive.json"
+            e.archive.save_atomic(p, expected_current_sha256="missing")
+            e.step(zero(e.state))
+            script = (
+                "import os,sys; from evo_geo import Archive; import evo_geo.core as core; "
+                "a=Archive.load(sys.argv[1]); "
+                "real=core.os.fsync; count=[0]; "
+                "definitely_not_used=0; "
+                "exec('def crash_on_directory_fsync(fd):\\n count[0]+=1\\n if count[0]==2: os._exit(78)\\n return real(fd)'); "
+                "core.os.fsync=crash_on_directory_fsync; "
+                "a.save_atomic(sys.argv[1], expected_current_sha256=__import__('hashlib').sha256(open(sys.argv[1],'rb').read()).hexdigest())"
+            )
+            result = subprocess.run([sys.executable, "-c", script, str(p)], check=False)
+            self.assertEqual(result.returncode, 78)
+            recovered = Archive.load(p)
+            self.assertEqual(recovered.events, e.archive.events)
+            self.assertEqual(recovered.checkpoints, e.archive.checkpoints)
