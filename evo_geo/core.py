@@ -241,3 +241,13 @@ class Engine:
         self.archive.commit_bundle(sealed); self.state=w
         if c.checkpoint_interval>0 and n%c.checkpoint_interval==0: self.archive.checkpoint(w)
         return w.clone()
+
+
+def verify_chain(events, genesis="0"*64):
+    previous=genesis
+    for event in events:
+        if not isinstance(event,dict) or event.get("previous_hash")!=previous: return False
+        body=dict(event); actual=body.pop("event_hash",None)
+        if not isinstance(actual,str) or sha256_hex(canonical_bytes(body))!=actual: return False
+        previous=actual
+    return True
