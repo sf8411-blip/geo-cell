@@ -282,6 +282,15 @@ class Archive:
                     i=ids[0]
                     if i in moves or i not in state_vertices or (data["x"],data["y"])!=(state_vertices[i].x,state_vertices[i].y):
                         return False
+                    try:
+                        cx,cy,clipped,corrections=clip_to_radius(data["proposed_x"],data["proposed_y"],self.contract.R_MAX_Q)
+                    except (TypeError,ValueError,ArithmeticError):
+                        return False
+                    if (cx,cy)!=(data["x"],data["y"]):
+                        return False
+                    clips=[x for x in items if x["type"]=="BOUNDARY_CLIP" and x.get("entity_ids")==[i]]
+                    if bool(clips)!=clipped or (clipped and (clips[0]["data"]["corrections"]!=corrections or (clips[0]["data"]["x"],clips[0]["data"]["y"])!=(cx,cy))):
+                        return False
                     moves[i]=data
                 elif kind=="BOUNDARY_CLIP":
                     i=ids[0]
