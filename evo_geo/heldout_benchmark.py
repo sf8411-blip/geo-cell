@@ -74,8 +74,29 @@ def _error(rule: Rule, labels: dict[int, int], xs: tuple[int, ...]) -> float:
     return sum(rule(x) != labels[x] for x in xs) / len(xs)
 
 
-def run_trial(seed: int, train_size: int = 16, adversarial_fraction: float = 0.0) -> dict:
-    """One seeded trial. The scorer retains the target label; selection sees only training data."""
+def _majority_prediction(labels: dict[int, int], xs: tuple[int, ...]) -> int:
+    """Majority-class baseline; ties deterministically choose 0."""
+    ones = sum(labels[x] for x in xs)
+    return int(ones > len(xs) - ones)
+
+
+def _constant_error(prediction: int, labels: dict[int, int], xs: tuple[int, ...]) -> float:
+    return sum(prediction != labels[x] for x in xs) / len(xs) if xs else 0.0
+
+
+def run_trial(
+    seed: int,
+    train_size: int = 16,
+    adversarial_fraction: float = 0.0,
+    split_mode: str = "random",
+) -> dict:
+    """One trial with held-out labels isolated from the learner and shared baselines.
+
+    random samples train/test points from the same domain. range_shift trains on
+    the low-valued prefix and evaluates on the remaining high-valued range.
+    """
+    if split_mode not in {"random", "range_shift"}:
+        raise ValueError("split_mode must be 'random' or 'range_shift'")
     if not 4 <= train_size < len(DOMAIN):
         raise ValueError("train_size must be in [4, len(DOMAIN)-1]")
     if not 0.0 <= adversarial_fraction <= 1.0:
@@ -84,12 +105,18 @@ def run_trial(seed: int, train_size: int = 16, adversarial_fraction: float = 0.0
     rng = random.Random(seed)
     rules = candidate_rules()
     target = rng.choice(target_rules())
-    shuffled = list(DOMAIN)
-    rng.shuffle(shuffled)
-    train_x = tuple(sorted(shuffled[:train_size]))
-    heldout_x = tuple(sorted(shuffled[train_size:]))
+    if split_mode == "random":
+        shuffled = list(DOMAIN)
+        rng.shuffle(shuffled)
+        train_x = tuple(sorted(shuffled[:train_size]))
+        heldout_x = tuple(sorted(shuffled[train_size:]))
+    else:
+        train_x = tuple(range(train_size))
+        heldout_x = tuple(range(train_size, len(DOMAIN)))
+
+    # Evaluator truth is separate from learner-visible training evidence.
     truth = {x: target(x) for x in DOMAIN}
-    observed = dict(truth)
+    observed = {x: truth[x] for x in train_x}
 
     # Adversarial reporters flip a reproducible subset of training labels only.
     n_flip = round(len(train_x) * adversarial_fraction)
@@ -107,12 +134,27 @@ def run_trial(seed: int, train_size: int = 16, adversarial_fraction: float = 0.0
     heldout_error = _error(selected, truth, heldout_x)
     exact_match = all(selected(x) == target(x) for x in DOMAIN)
     train_fit = best_train_error == 0.0
+
+    # Baselines receive exactly the same observed training data and test points.
+    majority = _majority_prediction(observed, train_x)
+    majority_test_error = _constant_error(majority, truth, heldout_x)
+    random_candidate = random.Random(seed ^ 0x5EED5EED).choice(rules)
+    random_candidate_train_error = _error(random_candidate, observed, train_x)
+    random_candidate_test_error = _error(random_candidate, truth, heldout_x)
     return {
         "seed": seed,
+        "split_mode": split_mode,
         "target_rule": target.name,
         "selected_rule": selected.name,
         "train_error_observed": best_train_error,
         "heldout_error_clean_labels": heldout_error,
+        "majority_baseline_prediction": majority,
+        "majority_baseline_heldout_error": majority_test_error,
+        "random_candidate_rule": random_candidate.name,
+        "random_candidate_train_error": random_candidate_train_error,
+        "random_candidate_heldout_error": random_candidate_test_error,
+        "selected_minus_majority_error": heldout_error - majority_test_error,
+        "selected_minus_random_candidate_error": heldout_error - random_candidate_test_error,
         "exact_rule_match": exact_match,
         "perfect_training_fit": train_fit,
         "false_acceptance": train_fit and heldout_error > 0.0,
@@ -129,41 +171,61 @@ def run_benchmark(
     seed: int = 20261030,
     train_size: int = 16,
     attack_rates: tuple[float, ...] = (0.0, 0.1, 0.25),
+    split_modes: tuple[str, ...] = ("random", "range_shift"),
 ) -> dict:
-    """Repeat across seeded target/split choices and report rates with 95% intervals."""
+    """Repeat trials, compare baselines, and report rates with 95% intervals."""
     if trials < 1:
         raise ValueError("trials must be >= 1")
     conditions = []
-    for attack_index, attack_rate in enumerate(attack_rates):
-        rows = [
-            run_trial(seed + attack_index * 1_000_003 + i, train_size, attack_rate)
-            for i in range(trials)
-        ]
-        false_accepts = sum(row["false_acceptance"] for row in rows)
-        failures = sum(row["heldout_error_clean_labels"] > 0.0 for row in rows)
-        exact = sum(row["exact_rule_match"] for row in rows)
-        ambiguous = sum(row["ambiguous_minimizers"] for row in rows)
-        conditions.append({
-            "adversarial_fraction": attack_rate,
-            "trials": trials,
-            "false_acceptance_rate": false_accepts / trials,
-            "false_acceptance_95ci_wilson": wilson_interval(false_accepts, trials),
-            "heldout_failure_rate": failures / trials,
-            "heldout_failure_95ci_wilson": wilson_interval(failures, trials),
-            "exact_rule_match_rate": exact / trials,
-            "ambiguous_minimizer_rate": ambiguous / trials,
-            "mean_heldout_error": sum(row["heldout_error_clean_labels"] for row in rows) / trials,
-            "mean_observed_training_error": sum(row["train_error_observed"] for row in rows) / trials,
-        })
+    for split_index, split_mode in enumerate(split_modes):
+        if split_mode not in {"random", "range_shift"}:
+            raise ValueError(f"unsupported split mode: {split_mode}")
+        for attack_index, attack_rate in enumerate(attack_rates):
+            rows = [
+                run_trial(
+                    seed + split_index * 10_000_019 + attack_index * 1_000_003 + i,
+                    train_size, attack_rate, split_mode
+                )
+                for i in range(trials)
+            ]
+            false_accepts = sum(row["false_acceptance"] for row in rows)
+            failures = sum(row["heldout_error_clean_labels"] > 0.0 for row in rows)
+            exact = sum(row["exact_rule_match"] for row in rows)
+            ambiguous = sum(row["ambiguous_minimizers"] for row in rows)
+            conditions.append({
+                "split_mode": split_mode,
+                "adversarial_fraction": attack_rate,
+                "trials": trials,
+                "false_acceptance_rate": false_accepts / trials,
+                "false_acceptance_95ci_wilson": wilson_interval(false_accepts, trials),
+                "heldout_failure_rate": failures / trials,
+                "heldout_failure_95ci_wilson": wilson_interval(failures, trials),
+                "exact_rule_match_rate": exact / trials,
+                "ambiguous_minimizer_rate": ambiguous / trials,
+                "mean_heldout_error": sum(row["heldout_error_clean_labels"] for row in rows) / trials,
+                "mean_observed_training_error": sum(row["train_error_observed"] for row in rows) / trials,
+                "mean_majority_baseline_error": sum(row["majority_baseline_heldout_error"] for row in rows) / trials,
+                "mean_random_candidate_error": sum(row["random_candidate_heldout_error"] for row in rows) / trials,
+                "win_rate_vs_majority": sum(row["selected_minus_majority_error"] < 0 for row in rows) / trials,
+                "win_rate_vs_random_candidate": sum(row["selected_minus_random_candidate_error"] < 0 for row in rows) / trials,
+                "paired_mean_error_delta_vs_majority": sum(row["selected_minus_majority_error"] for row in rows) / trials,
+                "paired_mean_error_delta_vs_random_candidate": sum(row["selected_minus_random_candidate_error"] for row in rows) / trials,
+            })
     return {
         "benchmark": "phase1c_finite_grammar_heldout_adversarial",
         "seed": seed,
         "domain_size": len(DOMAIN),
         "candidate_count": len(candidate_rules()),
+        "target_count": len(target_rules()),
         "trials_per_condition": trials,
         "train_size": train_size,
-        "heldout_size": len(DOMAIN) - train_size,
-        "confidence_interval": "95% Wilson score interval; binomial approximation",
+        "heldout_size": len(DOMAIN) - train_size if "random" in split_modes else None,
+        "split_modes": list(split_modes),
+        "baseline_definitions": {
+            "majority": "predict majority observed training label; ties choose 0",
+            "random_candidate": "uniform candidate-rule draw using a separate deterministic seed",
+        },
+        "confidence_interval": "95% Wilson score interval for binomial proportions; paired error deltas are descriptive means without intervals",
         "interpretation_limit": (
             "Finite candidate grammar and synthetic binary rules only. "
             "This is not open-ended rule invention, calibrated confidence, "
