@@ -462,6 +462,10 @@ class Archive:
                     expected_child_id+=1
             if expected_child_id!=state.next_vertex_id:
                 return False
+        expected_checkpoints = ({step for step in snapshots if step % self.contract.checkpoint_interval == 0}
+                                if self.contract.checkpoint_interval > 0 else set())
+        if set(self.checkpoints) != expected_checkpoints:
+            return False
         for step,cp in self.checkpoints.items():
             if type(step) is not int or not isinstance(cp,dict) or set(cp)!={"step","state","state_hash"}:
                 return False
