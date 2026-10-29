@@ -1,0 +1,38 @@
+name: Phase 1D multi-cell evidence provenance
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  provenance:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package
+        run: python -m pip install -e .
+      - name: Run complete test suite
+        run: python -m unittest discover -s tests -v
+      - name: Verify provenance API smoke test
+        run: |
+          python - <<'PY'
+          from evo_geo.evidence_provenance import EvidenceReport, assess_claim
+          a = EvidenceReport("cell-a", "source-a", "exp-1", "claim-1", "yes", "lineage-a")
+          b = EvidenceReport("cell-b", "source-b", "exp-1", "claim-1", "no", "lineage-b")
+          result = assess_claim([a, b], "claim-1")
+          assert result.has_conflict
+          assert len(result.reports) == 2
+          assert result.independent_group_count == 2
+          print("Phase 1D provenance smoke test passed")
+          PY
