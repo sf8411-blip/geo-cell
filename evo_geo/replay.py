@@ -57,7 +57,22 @@ def replay_from_checkpoint(checkpoint, events, target_step, contract=None):
     # Also require Archive-level checkpoint/event consistency where possible.
     audit = Archive(contract=contract)
     audit.events = events
-    audit.checkpoints = {checkpoint["step"]: checkpoint}
+    # The replay API receives one checkpoint, not the archive's full checkpoint
+    # table. Reconstruct the other *expected* periodic checkpoints from the
+    # already-validated committed snapshots so Archive.verify can audit event
+    # semantics without mistaking this reduced input for a truncated archive.
+    audit.checkpoints = {}
+    for step, snapshot in snapshots.items():
+        if contract.checkpoint_interval > 0 and step % contract.checkpoint_interval == 0:
+            if step == checkpoint["step"]:
+                audit.checkpoints[step] = checkpoint
+            else:
+                payload = snapshot
+                audit.checkpoints[step] = {
+                    "step": step,
+                    "state": payload,
+                    "state_hash": sha256_hex(canonical_bytes(payload)),
+                }
     if not audit.verify():
         raise ValueError("archive verification failed")
 
