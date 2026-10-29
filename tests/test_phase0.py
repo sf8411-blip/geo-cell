@@ -203,6 +203,12 @@ class AdversarialPhase0Tests(unittest.TestCase):
                 Archive.load(p)
 
 
+    def test_archive_verify_rejects_unhashable_event_type(self):
+        e=Engine()
+        e.step(zero(e.state))
+        e.archive.events[0]["type"]=[]
+        self.assertFalse(e.archive.verify())
+
     def test_rehashed_move_event_semantic_tamper_rejected(self):
         e=Engine()
         e.step(zero(e.state))
