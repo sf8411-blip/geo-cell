@@ -4,12 +4,12 @@ This document defines operational controls that code cannot establish by itself.
 
 ## 1. Genesis anchor ceremony
 
-The `Archive.verify_genesis_anchor(digest)` method checks a recorded start-state against a digest supplied by the caller. It does **not** authenticate the person or process that supplied that digest.
+The `Archive.verify_genesis_anchor(digest)` method checks a recorded start-state and its execution contract against a digest supplied by the caller. It does **not** authenticate the person or process that supplied that digest.
 
 1. Establish the intended initial state from a reviewed source independent of the archive under examination. For the default Phase 0 state, use `initial_state()` and `state_to_dict()`.
 2. Compute the digest using the project's canonical JSON implementation:
 
-   `python -c "from evo_geo import initial_state; from evo_geo.core import state_to_dict,canonical_bytes,sha256_hex; print(sha256_hex(canonical_bytes(state_to_dict(initial_state()))))"`
+   `python -c "from evo_geo import initial_state,Contract,genesis_anchor_sha256; print(genesis_anchor_sha256(initial_state(),Contract()))"`
 
 3. Record the digest, contract/spec version, repository URL, intended commit SHA, date, and approver in an independently controlled location (for example, a separately permissioned release record or offline signed operational record). Do not treat a digest committed beside the archive in the same unprotected branch as a trust root.
 4. During verification, load the archive and call `archive.verify_genesis_anchor(expected_digest)`. Reject the archive if it returns false or if the anchor's provenance cannot be independently established.
