@@ -306,7 +306,7 @@ class Archive:
                         cx,cy,clipped,corrections=clip_to_radius(data["proposed_x"],data["proposed_y"],self.contract.R_MAX_Q)
                     except (TypeError,ValueError,ArithmeticError):
                         return False
-                    action_map=start_snapshots.get(step+"__actions",{})
+                    action_map=action_snapshots.get(step,{})
                     if i not in action_map:
                         return False
                     sx,sy=action_map[i]
