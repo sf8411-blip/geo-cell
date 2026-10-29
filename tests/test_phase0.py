@@ -482,6 +482,23 @@ class TrustConcurrencyHardeningTests(unittest.TestCase):
         expected = genesis_anchor_sha256(initial_state(), e.archive.contract)
         self.assertTrue(e.archive.verify_genesis_anchor(expected))
         self.assertNotEqual(expected, genesis_anchor_sha256(initial_state(), Contract(spec_version="other-contract")))
+        # A re-hashed archive with the same initial state but a substituted contract
+        # must not pass the independently pinned genesis anchor.
+        import copy
+        forged_contract = Contract(spec_version="forged-contract")
+        bodies = copy.deepcopy(e.archive.events)
+        for event in bodies:
+            event.pop("previous_hash", None)
+            event.pop("event_hash", None)
+            if event["type"] == "STEP_STARTED":
+                event["data"]["contract"] = {
+                    key: getattr(forged_contract, key)
+                    for key in ("spec_version", "Q", "R_Q", "R_MAX_Q", "H_Q", "D_ADD_Q", "D_REMOVE_Q", "A_MAX_Q", "checkpoint_interval", "max_coordinate_abs")
+                }
+        forged = Archive(contract=forged_contract)
+        forged.events = forged.prepare_bundle(bodies)
+        self.assertTrue(forged.verify())
+        self.assertFalse(forged.verify_genesis_anchor(expected))
         self.assertFalse(e.archive.verify_genesis_anchor("0" * 64))
         self.assertFalse(e.archive.verify_genesis_anchor("not-a-digest"))
         # An archive without a recorded step has no genesis snapshot to anchor.
