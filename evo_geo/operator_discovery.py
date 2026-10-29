@@ -169,7 +169,7 @@ def search(observations: Iterable[Observation], *, max_cost=4, max_candidates=20
                         tuple(e.canonical() for e in matches),tuple(rejected),0.0,GRAMMAR_VERSION,digest,tuple(log))
 
 def check_counterexamples(expression: str, observations: Iterable[Observation]):
-    pool = {e.canonical():e for e in enumerate_candidates(max_cost=8,max_candidates=10000)}
+    pool = {e.canonical():e for e in enumerate_candidates(max_cost=4,max_candidates=2000)}
     if expression not in pool: return {"status":"unknown_candidate","expression":expression,"contradictions":[]}
     expr = pool[expression]; contradictions = []
     for o in observations:
