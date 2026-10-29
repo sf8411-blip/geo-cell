@@ -223,3 +223,27 @@ class AdversarialPhase0Tests(unittest.TestCase):
                     self.assertEqual(recovered.events,original.events)
                     self.assertEqual(recovered.checkpoints,original.checkpoints)
                     self.assertEqual([x for x in Path(td).iterdir() if x.name.endswith(".tmp")],[])
+
+    def test_process_crash_before_replace_preserves_previous_archive(self):
+        import subprocess, sys
+        e=Engine(contract=Contract(checkpoint_interval=1))
+        e.step(zero(e.state))
+        with tempfile.TemporaryDirectory() as td:
+            p=Path(td)/"archive.json"
+            e.archive.save_atomic(p)
+            original=Archive.load(p)
+            script = (
+                "import os, sys; from evo_geo import Archive; "
+                "import evo_geo.core as core; "
+                "a=Archive.load(sys.argv[1]); "
+                "core.os.replace=lambda *args, **kwargs: os._exit(77); "
+                "a.save_atomic(sys.argv[1])"
+            )
+            result=subprocess.run([sys.executable,"-c",script,str(p)],check=False)
+            self.assertEqual(result.returncode,77)
+            recovered=Archive.load(p)
+            self.assertEqual(recovered.events,original.events)
+            self.assertEqual(recovered.checkpoints,original.checkpoints)
+            # A hard process exit can leave an uncommitted temporary file.
+            self.assertTrue(any(x.name.endswith(".tmp") for x in Path(td).iterdir()))
+
