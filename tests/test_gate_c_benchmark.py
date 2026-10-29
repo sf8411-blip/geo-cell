@@ -1,7 +1,7 @@
 import unittest
 
 from evo_geo.gate_c_benchmark import (
-    TrialConfig, run_benchmark, run_trial, score_frozen_predictions,
+    TrialConfig, run_benchmark, run_seed_sweep, run_trial, score_frozen_predictions,
 )
 from evo_geo.operator_discovery import Observation
 
@@ -55,6 +55,18 @@ class GateCBenchmarkTests(unittest.TestCase):
         second = run_benchmark(config)
         self.assertEqual(first, second)
         self.assertEqual(first["trial_count"], 5)
+        self.assertTrue(first["report_digest"])
+
+    def test_multi_seed_sweep_retains_replicates_and_aggregates(self):
+        seeds = (7, 19, 31)
+        first = run_seed_sweep(seeds=seeds, candidate_budget=500)
+        second = run_seed_sweep(seeds=seeds, candidate_budget=500)
+        self.assertEqual(first, second)
+        self.assertEqual(first["seeds"], list(seeds))
+        self.assertEqual(first["trial_count"], 15)
+        self.assertEqual(first["family_summaries"]["heldout_flip"]["n"], 3)
+        self.assertEqual(first["family_summaries"]["heldout_flip"]["heldout_rejection_rate"], 1.0)
+        self.assertEqual(len(first["per_seed_reports"]), 3)
         self.assertTrue(first["report_digest"])
 
     def test_invalid_budgets_rejected(self):
