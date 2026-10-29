@@ -357,7 +357,9 @@ class Archive:
 
 class Engine:
     def __init__(self,state=None,contract=None,archive=None):
-        self.contract=contract or (archive.contract if archive is not None else Contract()); self.state=(state or initial_state()).clone(); self.archive=archive or Archive(self.contract);\n        if self.archive.contract != self.contract: raise ValueError("engine/archive contract mismatch")\n        self._validate(self.state)
+        self.contract=contract or (archive.contract if archive is not None else Contract()); self.state=(state or initial_state()).clone(); self.archive=archive or Archive(self.contract);
+        if self.archive.contract != self.contract: raise ValueError("engine/archive contract mismatch")
+        self._validate(self.state)
     def _validate(self,s):
         c=self.contract
         if type(s.step) is not int or s.step<0: raise ValueError("invalid step")
