@@ -1,5 +1,5 @@
 import unittest
-from evo_geo.operator_discovery import (GRAMMAR_VERSION, Observation, check_counterexamples,
+from evo_geo.operator_discovery import (Expr, GRAMMAR_VERSION, Observation, check_counterexamples,
     enumerate_candidates, evaluate, search)
 
 class OperatorDiscoveryTests(unittest.TestCase):
@@ -38,7 +38,7 @@ class OperatorDiscoveryTests(unittest.TestCase):
         with self.assertRaises(ValueError): enumerate_candidates(5,10)
         with self.assertRaises(ValueError): enumerate_candidates(2,0)
     def test_nonbinary_candidate_output_rejected(self):
-        expr=next(e for e in enumerate_candidates(3,1000) if e.canonical()=="(x + 1)")
+        expr=Expr("add", (Expr("var"), Expr("const", value=1)), kind="int")
         with self.assertRaises(ValueError): evaluate(expr,1)
 
 if __name__=="__main__": unittest.main()
