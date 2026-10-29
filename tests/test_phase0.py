@@ -259,6 +259,51 @@ class AdversarialPhase0Tests(unittest.TestCase):
                     self.assertEqual(recovered.checkpoints,original.checkpoints)
                     self.assertEqual([x for x in Path(td).iterdir() if x.name.endswith(".tmp")],[])
 
+    def test_failure_after_replace_leaves_new_archive_verifiable(self):
+        from unittest.mock import patch
+        import evo_geo.core as core
+        e=Engine(contract=Contract(checkpoint_interval=1))
+        e.step(zero(e.state))
+        with tempfile.TemporaryDirectory() as td:
+            p=Path(td)/"archive.json"
+            e.archive.save_atomic(p)
+            e.step(zero(e.state))
+            real_replace=core.os.replace
+            def replace_then_fail(src,dst):
+                real_replace(src,dst)
+                raise OSError("injected failure after rename")
+            with patch("evo_geo.core.os.replace",side_effect=replace_then_fail):
+                with self.assertRaises(OSError):
+                    e.archive.save_atomic(p)
+            recovered=Archive.load(p)
+            self.assertEqual(recovered.events,e.archive.events)
+            self.assertEqual(recovered.checkpoints,e.archive.checkpoints)
+
+    @unittest.skipUnless(__import__("os").name=="posix","directory fsync is POSIX-specific")
+    def test_directory_fsync_failure_reports_uncertain_durability_but_valid_new_archive(self):
+        from unittest.mock import patch
+        import evo_geo.core as core
+        e=Engine(contract=Contract(checkpoint_interval=1))
+        e.step(zero(e.state))
+        with tempfile.TemporaryDirectory() as td:
+            p=Path(td)/"archive.json"
+            e.archive.save_atomic(p)
+            e.step(zero(e.state))
+            real_fsync=core.os.fsync
+            calls=0
+            def fail_second_fsync(fd):
+                nonlocal calls
+                calls+=1
+                if calls==2:
+                    raise OSError("injected directory fsync failure")
+                return real_fsync(fd)
+            with patch("evo_geo.core.os.fsync",side_effect=fail_second_fsync):
+                with self.assertRaises(OSError):
+                    e.archive.save_atomic(p)
+            recovered=Archive.load(p)
+            self.assertEqual(recovered.events,e.archive.events)
+            self.assertEqual(recovered.checkpoints,e.archive.checkpoints)
+
     def test_process_crash_before_replace_preserves_previous_archive(self):
         import subprocess, sys
         e=Engine(contract=Contract(checkpoint_interval=1))
