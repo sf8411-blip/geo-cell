@@ -8,7 +8,7 @@ This experiment addresses three weaknesses of the Phase 1B toy test: a single ta
 
 - Domain: integers 0–63 with binary labels.
 - Candidate grammar: parity, bit-count parity, modular residue indicators, thresholds, and periodic block rules.
-- Per trial, the evaluator chooses a target candidate and hides its identity from the selection procedure.
+- Per trial, the evaluator chooses a hidden target from five target functions. Some targets (prime indicator and two compositions of simpler predicates) are intentionally outside the learner's candidate grammar.
 - A seeded random split assigns 16 inputs to training and the remaining 48 to held-out evaluation.
 - The learner selects the candidate with the lowest error on observed training labels; ties are broken deterministically by rule name and reported.
 - Adversarial conditions flip a specified fraction (0%, 10%, or 25%) of training labels. Held-out error is computed against the clean target labels.
@@ -28,7 +28,7 @@ The JSON output is deterministic for a fixed seed, configuration, Python semanti
 
 A **false acceptance** here means the selected candidate fits every observed training label but disagrees with the target on at least one held-out input. This is an operational benchmark metric, not a universal definition of false belief. An adversarial flip is a synthetic corruption model, not a full Byzantine network attack.
 
-The rule family is finite and explicitly encoded. The target identity is hidden during selection, but the candidate grammar is known. Therefore this experiment tests generalization and robustness within a small DSL; it does **not** establish open-ended rule invention, self-modification of representations, calibrated confidence, cryptographic provenance, real-device decentralization, scientific discovery, or AGI.
+The evaluator's target family is finite and explicitly encoded, while its identity is hidden during selection. The learner's candidate grammar is known but cannot represent every target. Therefore this experiment tests generalization under model misspecification within a small DSL; it does **not** establish open-ended rule invention, self-modification of representations, calibrated confidence, cryptographic provenance, real-device decentralization, scientific discovery, or AGI.
 
 A Wilson interval quantifies binomial sampling uncertainty under the trial model; it does not account for model misspecification or make synthetic trials representative of real environments. Results must be reported with the seed, trial count, split size, attack rate, and candidate grammar.
 
