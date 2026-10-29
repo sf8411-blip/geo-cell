@@ -25,6 +25,24 @@ class EvidenceLabTests(unittest.TestCase):
         self.assertEqual(cell.hypotheses["h"].status, "rejected")
         self.assertEqual(cell.hypotheses["h"].retractions, 1)
 
+
+    def test_conflicting_reports_cannot_overwrite_counterexample(self):
+        cell = EvidenceCell(0)
+        proposal = EvidenceMessage("p2", "proposal", 0, 1, "h2", "parity", None, ())
+        good = EvidenceMessage(
+            "e2", "evidence", 0, 1, "h2", "parity", "p2",
+            (Observation(0, 0), Observation(2, 0), Observation(4, 0)),
+        )
+        contradictory = EvidenceMessage(
+            "c2", "counterexample", 1, 1, "h2", "parity", "e2",
+            (Observation(0, 1),),
+        )
+        cell.receive(proposal)
+        cell.receive(good)
+        self.assertEqual(cell.hypotheses["h2"].status, "accepted")
+        cell.receive(contradictory)
+        self.assertEqual(cell.hypotheses["h2"].status, "rejected")
+
     def test_unknown_hypothesis_evidence_is_buffered(self):
         cell = EvidenceCell(0)
         evidence = EvidenceMessage(
