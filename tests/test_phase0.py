@@ -377,6 +377,7 @@ class AdversarialPhase0Tests(unittest.TestCase):
 
     def test_storage_failures_preserve_previous_archive(self):
         from unittest.mock import patch
+        import hashlib
         import evo_geo.core as core
         e=Engine(contract=Contract(checkpoint_interval=1))
         e.step(zero(e.state))
@@ -384,13 +385,14 @@ class AdversarialPhase0Tests(unittest.TestCase):
             p=Path(td)/"archive.json"
             e.archive.save_atomic(p)
             original=Archive.load(p)
+            expected=hashlib.sha256(p.read_bytes()).hexdigest()
             e.step(zero(e.state))
             for failure_point in ("fsync","replace"):
                 with self.subTest(failure_point=failure_point):
                     target=core.os.fsync if failure_point=="fsync" else core.os.replace
                     with patch("evo_geo.core.os."+failure_point, side_effect=OSError("injected storage failure")):
                         with self.assertRaises(OSError):
-                            e.archive.save_atomic(p)
+                            e.archive.save_atomic(p, expected_current_sha256=expected)
                     recovered=Archive.load(p)
                     self.assertEqual(len(recovered.events),len(original.events))
                     self.assertEqual(recovered.events,original.events)
@@ -399,12 +401,14 @@ class AdversarialPhase0Tests(unittest.TestCase):
 
     def test_failure_after_replace_leaves_new_archive_verifiable(self):
         from unittest.mock import patch
+        import hashlib
         import evo_geo.core as core
         e=Engine(contract=Contract(checkpoint_interval=1))
         e.step(zero(e.state))
         with tempfile.TemporaryDirectory() as td:
             p=Path(td)/"archive.json"
             e.archive.save_atomic(p)
+            expected=hashlib.sha256(p.read_bytes()).hexdigest()
             e.step(zero(e.state))
             real_replace=core.os.replace
             def replace_then_fail(src,dst):
@@ -412,7 +416,7 @@ class AdversarialPhase0Tests(unittest.TestCase):
                 raise OSError("injected failure after rename")
             with patch("evo_geo.core.os.replace",side_effect=replace_then_fail):
                 with self.assertRaises(OSError):
-                    e.archive.save_atomic(p)
+                    e.archive.save_atomic(p, expected_current_sha256=expected)
             recovered=Archive.load(p)
             self.assertEqual(recovered.events,e.archive.events)
             self.assertEqual(recovered.checkpoints,e.archive.checkpoints)
@@ -420,12 +424,14 @@ class AdversarialPhase0Tests(unittest.TestCase):
     @unittest.skipUnless(__import__("os").name=="posix","directory fsync is POSIX-specific")
     def test_directory_fsync_failure_reports_uncertain_durability_but_valid_new_archive(self):
         from unittest.mock import patch
+        import hashlib
         import evo_geo.core as core
         e=Engine(contract=Contract(checkpoint_interval=1))
         e.step(zero(e.state))
         with tempfile.TemporaryDirectory() as td:
             p=Path(td)/"archive.json"
             e.archive.save_atomic(p)
+            expected=hashlib.sha256(p.read_bytes()).hexdigest()
             e.step(zero(e.state))
             real_fsync=core.os.fsync
             calls=0
@@ -437,7 +443,7 @@ class AdversarialPhase0Tests(unittest.TestCase):
                 return real_fsync(fd)
             with patch("evo_geo.core.os.fsync",side_effect=fail_second_fsync):
                 with self.assertRaises(OSError):
-                    e.archive.save_atomic(p)
+                    e.archive.save_atomic(p, expected_current_sha256=expected)
             recovered=Archive.load(p)
             self.assertEqual(recovered.events,e.archive.events)
             self.assertEqual(recovered.checkpoints,e.archive.checkpoints)
@@ -451,11 +457,12 @@ class AdversarialPhase0Tests(unittest.TestCase):
             e.archive.save_atomic(p)
             original=Archive.load(p)
             script = (
-                "import os, sys; from evo_geo import Archive; "
+                "import os, sys, hashlib; from evo_geo import Archive; "
                 "import evo_geo.core as core; "
                 "a=Archive.load(sys.argv[1]); "
+                "expected=hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest(); "
                 "core.os.replace=lambda *args, **kwargs: os._exit(77); "
-                "a.save_atomic(sys.argv[1])"
+                "a.save_atomic(sys.argv[1], expected_current_sha256=expected)"
             )
             result=subprocess.run([sys.executable,"-c",script,str(p)],check=False)
             self.assertEqual(result.returncode,77)
