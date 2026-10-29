@@ -197,7 +197,7 @@ class Archive:
             "STEP_STARTED": (0, {"from_step","contract","start_state","actions"}),
             "MOVE": (1, {"x","y","proposed_x","proposed_y"}),
             "BOUNDARY_CLIP": (2, {"x","y","corrections"}),
-            "REPLICATION_REPLAY": (3, {"request_id"}),
+            "REPLICATION_REPLAY": (3, {"request_id","payload"}),
             "REPLICATION_REJECT": (3, {"request_id","status","reason","payload"}),
             "REPLICATION_ACCEPT": (3, {"request_id","status","child_id","payload"}),
             "SPECIAL_STATUS_CHANGE": (4, {"special"}),
@@ -419,6 +419,44 @@ class Archive:
                 return False
             if any(e["data"]["request_id"] in old_requests for e in accepted+rejected):
                 return False
+            # Replay the replication decision procedure in canonical request-ID order.
+            replication_events=[e for e in items if e["type"] in ("REPLICATION_REPLAY","REPLICATION_ACCEPT","REPLICATION_REJECT")]
+            request_ids=[e["data"]["request_id"] for e in replication_events]
+            if request_ids!=sorted(request_ids) or len(request_ids)!=len(set(request_ids)):
+                return False
+            working_positions={(v.x,v.y) for v in start_vertices.values()}
+            expected_child_id=start_state.next_vertex_id
+            for event in replication_events:
+                data=event["data"]; rid=data["request_id"]; payload=data["payload"]
+                if not isinstance(payload,dict) or set(payload)!={"parent_id","child_x","child_y"} or any(type(payload[k]) is not int for k in payload):
+                    return False
+                prior=old_requests.get(rid)
+                if prior is not None:
+                    if event["type"]!="REPLICATION_REPLAY" or prior.get("payload")!=payload:
+                        return False
+                    continue
+                if event["type"]=="REPLICATION_REPLAY":
+                    return False
+                reason=None
+                parent_id=payload["parent_id"]; x=payload["child_x"]; y=payload["child_y"]
+                if parent_id not in start_vertices: reason="UNKNOWN_PARENT"
+                elif abs(x)>self.contract.max_coordinate_abs or abs(y)>self.contract.max_coordinate_abs: reason="COORDINATE_RANGE"
+                elif not self.contract.R_Q**2 < x*x+y*y <= self.contract.R_MAX_Q**2: reason="RADIUS"
+                elif (x,y) in working_positions: reason="DUPLICATE_POSITION"
+                if reason is not None:
+                    if event["type"]!="REPLICATION_REJECT" or data.get("reason")!=reason or data.get("status")!="rejected":
+                        return False
+                else:
+                    if event["type"]!="REPLICATION_ACCEPT" or data.get("status")!="accepted" or data.get("child_id")!=expected_child_id:
+                        return False
+                    if event.get("entity_ids") != [parent_id,expected_child_id]:
+                        return False
+                    if (state_vertices[expected_child_id].x,state_vertices[expected_child_id].y)!=(x,y):
+                        return False
+                    working_positions.add((x,y))
+                    expected_child_id+=1
+            if expected_child_id!=state.next_vertex_id:
+                return False
         for step,cp in self.checkpoints.items():
             if type(step) is not int or not isinstance(cp,dict) or set(cp)!={"step","state","state_hash"}:
                 return False
@@ -520,7 +558,7 @@ class Engine:
             r=requests[rid]; payload=r.payload(); old=w.processed_requests.get(rid)
             if old is not None:
                 if old.get("payload")!=payload: raise ValueError("request ID conflicts with request ledger")
-                ev.append({"step":n,"phase":3,"type":"REPLICATION_REPLAY","data":{"request_id":rid}}); continue
+                ev.append({"step":n,"phase":3,"type":"REPLICATION_REPLAY","data":{"request_id":rid,"payload":payload}}); continue
             reason=None
             if r.parent_id not in start.vertices: reason="UNKNOWN_PARENT"
             elif abs(r.child_x)>c.max_coordinate_abs or abs(r.child_y)>c.max_coordinate_abs: reason="COORDINATE_RANGE"
