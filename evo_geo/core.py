@@ -289,7 +289,7 @@ class Archive:
                     if (cx,cy)!=(data["x"],data["y"]):
                         return False
                     clips=[x for x in items if x["type"]=="BOUNDARY_CLIP" and x.get("entity_ids")==[i]]
-                    if bool(clips)!=clipped or (clipped and (clips[0]["data"]["corrections"]!=corrections or (clips[0]["data"]["x"],clips[0]["data"]["y"])!=(cx,cy))):
+                    if len(clips)>1 or bool(clips)!=clipped or (clipped and (clips[0]["data"]["corrections"]!=corrections or (clips[0]["data"]["x"],clips[0]["data"]["y"])!=(cx,cy))):
                         return False
                     moves[i]=data
                 elif kind=="BOUNDARY_CLIP":
