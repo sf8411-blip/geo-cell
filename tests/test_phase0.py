@@ -499,8 +499,7 @@ class CrossPlatformStressTests(unittest.TestCase):
             restored = Archive.load(path)
             self.assertTrue(restored.verify())
             self.assertEqual(restored.events, right.archive.events)
-            self.assertEqual(state_to_dict(restored.checkpoints[120]["state"] if False else left.state),
-                             state_to_dict(right.state))
+            self.assertEqual(restored.checkpoints[120]["state"], state_to_dict(right.state))
 
 
 class TrustConcurrencyHardeningTests(unittest.TestCase):
