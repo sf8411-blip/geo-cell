@@ -241,6 +241,26 @@ class AdversarialPhase0Tests(unittest.TestCase):
         a.events=self.reseal(bodies)
         self.assertFalse(a.verify())
 
+    def test_replication_accept_reject_and_replay_audit(self):
+        e=Engine()
+        req=ReplicationRequest("a-accept",1,3*Contract().Q,0)
+        bad=ReplicationRequest("b-unknown",999,3*Contract().Q,Contract().Q)
+        e.step(StepInputs(zero(e.state).direct_actions,[req,bad]))
+        self.assertTrue(e.archive.verify())
+        e.step(StepInputs(zero(e.state).direct_actions,[req]))
+        self.assertTrue(e.archive.verify())
+
+    def test_rehashed_replication_reason_forgery_rejected(self):
+        e=Engine()
+        bad=ReplicationRequest("unknown-parent",999,3*Contract().Q,Contract().Q)
+        e.step(StepInputs(zero(e.state).direct_actions,[bad]))
+        bodies=[dict(x) for x in e.archive.events]
+        event=next(x for x in bodies if x.get("type")=="REPLICATION_REJECT")
+        event["data"]["reason"]="RADIUS"
+        a=Archive()
+        a.events=self.reseal(bodies)
+        self.assertFalse(a.verify())
+
     def test_rehashed_action_map_tamper_rejected(self):
         e=Engine()
         e.step(zero(e.state))
