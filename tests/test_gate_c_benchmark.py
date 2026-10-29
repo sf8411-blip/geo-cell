@@ -33,11 +33,8 @@ class GateCBenchmarkTests(unittest.TestCase):
             self.assertEqual(result["disposition"], "rejected_by_heldout_counterexample")
             self.assertIsNotNone(result["counterexample_audit"])
             self.assertEqual(result["counterexample_audit"]["status"], "rejected")
-        # Regardless of outcome, the selected candidate record is frozen and remains
-        # identical to the record made before the held-out score.
         self.assertIn("candidate_id", result["frozen_candidate"])
         self.assertIn("expression", result["frozen_candidate"])
-
 
     def test_adversarial_heldout_shift_rejects_frozen_rule(self):
         result = run_trial("heldout_flip", TrialConfig(seed=5, candidate_budget=1000))
@@ -45,7 +42,12 @@ class GateCBenchmarkTests(unittest.TestCase):
         self.assertEqual(result["heldout"]["error_rate"], 1.0)
         self.assertEqual(result["disposition"], "rejected_by_heldout_counterexample")
         self.assertEqual(result["counterexample_audit"]["status"], "rejected")
-        self.assertEqual(result["counterexample_audit"]["contradictions"], result["heldout"]["counterexamples"])
+        heldout = result["heldout"]["counterexamples"]
+        audited = result["counterexample_audit"]["contradictions"]
+        self.assertEqual(
+            [(row["x"], row["expected"], row["predicted"]) for row in heldout],
+            [(row["x"], row["y"], row["prediction"]) for row in audited],
+        )
 
     def test_benchmark_report_replays_byte_for_byte(self):
         config = TrialConfig(seed=11, candidate_budget=250)
