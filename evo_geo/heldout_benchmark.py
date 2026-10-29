@@ -61,11 +61,22 @@ def wilson_interval(successes: int, trials: int, z: float = 1.959963984540054) -
     """Two-sided 95% Wilson score interval for a binomial proportion."""
     if trials <= 0:
         return [0.0, 1.0]
-    p = successes / trials
+    if not 0 <= successes <= trials:
+        raise ValueError("successes must be in [0, trials]")
+    # Exact binomial boundary cases should remain exact despite floating-point
+    # roundoff in center - half (which can otherwise produce ~1e-18 at zero).
+    if successes == 0:
+        p = 0.0
+    elif successes == trials:
+        p = 1.0
+    else:
+        p = successes / trials
     denom = 1.0 + z * z / trials
     center = (p + z * z / (2.0 * trials)) / denom
     half = z * ((p * (1.0 - p) / trials + z * z / (4.0 * trials * trials)) ** 0.5) / denom
-    return [max(0.0, center - half), min(1.0, center + half)]
+    low = 0.0 if successes == 0 else max(0.0, center - half)
+    high = 1.0 if successes == trials else min(1.0, center + half)
+    return [low, high]
 
 
 def _error(rule: Rule, labels: dict[int, int], xs: tuple[int, ...]) -> float:
