@@ -47,6 +47,9 @@ def target_label(family: str, x: int, seed: int = 0) -> int:
         return int(x < 0)
     if family == "seeded_noise":
         return random.Random(f"{seed}:{x}").randint(0, 1)
+    if family == "heldout_flip":
+        base = x % 2
+        return 1 - base if abs(x) > 8 else base
     raise ValueError(f"unknown target family: {family}")
 
 
@@ -196,7 +199,7 @@ def run_trial(family: str, config: TrialConfig = TrialConfig()) -> dict:
 
 def run_benchmark(config: TrialConfig = TrialConfig()) -> dict:
     """Run all preregistered target families and emit JSON-serializable records."""
-    families = ("parity", "threshold", "negative", "seeded_noise")
+    families = ("parity", "threshold", "negative", "seeded_noise", "heldout_flip")
     trials = [run_trial(family, config) for family in families]
     payload = {
         "benchmark_version": BENCHMARK_VERSION,
