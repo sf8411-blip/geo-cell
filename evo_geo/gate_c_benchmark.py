@@ -210,3 +210,65 @@ def run_benchmark(config: TrialConfig = TrialConfig()) -> dict:
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     payload["report_digest"] = hashlib.sha256(canonical.encode()).hexdigest()
     return payload
+
+
+DEFAULT_SWEEP_SEEDS = (11, 23, 37, 53, 71, 89, 107, 131, 149, 167)
+
+
+def run_seed_sweep(
+    seeds: Iterable[int] = DEFAULT_SWEEP_SEEDS,
+    candidate_budget: int = 1000,
+    max_cost: int = 4,
+    min_distinct_inputs: int = 4,
+) -> dict:
+    """Run a preregistered multi-seed replication and retain every raw trial."""
+    seed_values = tuple(seeds)
+    if not seed_values or any(type(seed) is not int for seed in seed_values):
+        raise ValueError("seeds must be a non-empty iterable of integers")
+    if len(set(seed_values)) != len(seed_values):
+        raise ValueError("seeds must be unique")
+    reports = [
+        run_benchmark(TrialConfig(
+            seed=seed,
+            candidate_budget=candidate_budget,
+            max_cost=max_cost,
+            min_distinct_inputs=min_distinct_inputs,
+        ))
+        for seed in seed_values
+    ]
+    families = ("parity", "threshold", "negative", "seeded_noise", "heldout_flip")
+    summaries = {}
+    for family in families:
+        trials = [
+            trial
+            for report in reports
+            for trial in report["trials"]
+            if trial["target_family"] == family
+        ]
+        n = len(trials)
+        summaries[family] = {
+            "n": n,
+            "selection_rate": sum(t["frozen_candidate"]["expression"] is not None for t in trials) / n,
+            "abstention_rate": sum(t["disposition"] == "abstained" for t in trials) / n,
+            "heldout_rejection_rate": sum(t["disposition"] == "rejected_by_heldout_counterexample" for t in trials) / n,
+            "mean_heldout_error_rate": sum(t["heldout"]["error_rate"] for t in trials) / n,
+            "mean_abstention_count": sum(t["heldout"]["abstention_count"] for t in trials) / n,
+            "baseline_mean_error_rates": {
+                name: sum(t["baselines"][name]["error_rate"] for t in trials) / n
+                for name in ("constant_zero", "constant_one", "identity_x", "seeded_random_search")
+            },
+        }
+    payload = {
+        "benchmark_version": BENCHMARK_VERSION,
+        "protocol": "gate-c-seed-sweep-v1",
+        "seeds": list(seed_values),
+        "candidate_budget": candidate_budget,
+        "max_cost": max_cost,
+        "min_distinct_inputs": min_distinct_inputs,
+        "trial_count": sum(report["trial_count"] for report in reports),
+        "family_summaries": summaries,
+        "per_seed_reports": reports,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    payload["report_digest"] = hashlib.sha256(canonical.encode()).hexdigest()
+    return payload
