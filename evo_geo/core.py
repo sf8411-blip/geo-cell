@@ -182,7 +182,8 @@ class Archive:
             if e.get("type")!="STEP_COMMITTED":
                 continue
             step=e.get("step")
-            if type(step) is not int or step<=previous_step:
+            # A valid archive must contain every committed transition in order.
+            if type(step) is not int or step != previous_step + 1:
                 return False
             data=e.get("data")
             if not isinstance(data,dict) or not isinstance(data.get("state"),dict):
@@ -225,8 +226,19 @@ class Archive:
     @classmethod
     def load(cls,path):
         d=json.loads(Path(path).read_text(encoding="utf-8"))
-        if not isinstance(d,dict) or d.get("schema_version")!=1 or not isinstance(d.get("events"),list) or not isinstance(d.get("checkpoints"),dict): raise ValueError("invalid archive schema")
-        a=cls(); a.events=d["events"]; a.checkpoints={int(k):v for k,v in d["checkpoints"].items()}
+        if (not isinstance(d,dict) or type(d.get("schema_version")) is not int
+                or d.get("schema_version") != 1 or not isinstance(d.get("events"),list)
+                or not isinstance(d.get("checkpoints"),dict)):
+            raise ValueError("invalid archive schema")
+        checkpoints={}
+        for key,value in d["checkpoints"].items():
+            if not isinstance(key,str) or not key.isdecimal() or str(int(key)) != key:
+                raise ValueError("invalid checkpoint key")
+            step=int(key)
+            if step in checkpoints:
+                raise ValueError("duplicate checkpoint step")
+            checkpoints[step]=value
+        a=cls(); a.events=d["events"]; a.checkpoints=checkpoints
         if not a.verify(): raise ValueError("archive integrity verification failed")
         return a
 
@@ -315,10 +327,18 @@ class Engine:
 
 
 def verify_chain(events, genesis="0"*64):
+    if not isinstance(events, list) or not isinstance(genesis, str):
+        return False
     previous=genesis
     for event in events:
         if not isinstance(event,dict) or event.get("previous_hash")!=previous: return False
         body=dict(event); actual=body.pop("event_hash",None)
-        if not isinstance(actual,str) or sha256_hex(canonical_bytes(body))!=actual: return False
+        if not isinstance(actual,str):
+            return False
+        try:
+            if sha256_hex(canonical_bytes(body))!=actual:
+                return False
+        except (TypeError, ValueError, OverflowError):
+            return False
         previous=actual
     return True
