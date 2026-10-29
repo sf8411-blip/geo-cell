@@ -213,6 +213,14 @@ class AdversarialPhase0Tests(unittest.TestCase):
         a.events=self.reseal(bodies)
         self.assertFalse(a.verify())
 
+        # The proposal is also semantically checked, not only the final x/y.
+        bodies=[dict(x) for x in e.archive.events]
+        move=next(x for x in bodies if x.get("type")=="MOVE")
+        move["data"]["proposed_x"] += 1
+        a=Archive()
+        a.events=self.reseal(bodies)
+        self.assertFalse(a.verify())
+
     def test_custom_contract_roundtrip_and_replay(self):
         from evo_geo.replay import replay_from_checkpoint
         c=Contract(R_MAX_Q=170000, max_coordinate_abs=200000, checkpoint_interval=1)
