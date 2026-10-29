@@ -539,6 +539,31 @@ class Engine:
         if type(s.next_vertex_id) is not int or s.next_vertex_id<=max(ids,default=0): raise ValueError("non-monotonic next ID")
         if {i for i,v in s.vertices.items() if v.special}!=special_ids(s.vertices): raise ValueError("special status inconsistent")
         if not isinstance(s.processed_requests,dict): raise ValueError("invalid request ledger")
+        accepted_children=set()
+        allowed_rejection_reasons={"UNKNOWN_PARENT","COORDINATE_RANGE","RADIUS","DUPLICATE_POSITION"}
+        for rid,result in s.processed_requests.items():
+            if not isinstance(rid,str) or not rid or not isinstance(result,dict):
+                raise ValueError("invalid processed request")
+            status=result.get("status")
+            payload=result.get("payload")
+            if status not in ("accepted","rejected") or not isinstance(payload,dict):
+                raise ValueError("invalid processed request result")
+            if set(payload)!={"parent_id","child_x","child_y"} or any(type(payload[k]) is not int for k in payload):
+                raise ValueError("invalid processed request payload")
+            if status=="accepted":
+                if set(result)!={"status","child_id","payload"} or type(result["child_id"]) is not int:
+                    raise ValueError("invalid accepted request result")
+                child_id=result["child_id"]
+                if child_id not in s.vertices or child_id in accepted_children:
+                    raise ValueError("invalid or duplicate accepted child ID")
+                child=s.vertices[child_id]
+                if (child.x,child.y)!=(payload["child_x"],payload["child_y"]):
+                    raise ValueError("accepted request does not match child position")
+                accepted_children.add(child_id)
+            else:
+                if (set(result)!={"status","reason","payload"} or
+                        result["reason"] not in allowed_rejection_reasons):
+                    raise ValueError("invalid rejected request result")
     def step(self,inputs):
         c=self.contract; start=self.state; self._validate(start)
         if not isinstance(inputs,StepInputs): raise TypeError("StepInputs required")
