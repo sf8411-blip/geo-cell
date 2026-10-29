@@ -68,3 +68,26 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(e.state.step,50); self.assertTrue(e.archive.verify())
 
 if __name__=="__main__": unittest.main()
+
+from evo_geo.replay import replay_from_checkpoint
+
+class ReplayAndGraphTests(unittest.TestCase):
+    def test_replay_from_checkpoint(self):
+        e=Engine(contract=Contract(checkpoint_interval=1))
+        for _ in range(4): e.step(zero(e.state))
+        recovered=replay_from_checkpoint(e.archive.checkpoints[2],e.archive.events,4)
+        self.assertEqual(state_to_dict(recovered),state_to_dict(e.state))
+
+    def test_replay_rejects_corrupt_checkpoint(self):
+        e=Engine(contract=Contract(checkpoint_interval=1)); e.step(zero(e.state))
+        cp=dict(e.archive.checkpoints[1]); cp["state_hash"]="0"*64
+        with self.assertRaises(ValueError): replay_from_checkpoint(cp,e.archive.events,1)
+
+    def test_edge_hysteresis_boundaries(self):
+        from evo_geo.core import State, Vertex
+        c=Contract()
+        # Absent edge at the add threshold is added.
+        s=State(vertices={1:Vertex(1,0,0),2:Vertex(2,c.D_ADD_Q,0)},next_vertex_id=3)
+        e=Engine(s,c); e._validate(e.state)
+        e.step(StepInputs({1:(0,0),2:(0,0)},[]))
+        self.assertIn((1,2),e.state.edges)
