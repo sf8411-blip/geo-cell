@@ -37,9 +37,11 @@ jobs:
               raise SystemExit("unexpected benchmark identifier")
           if report["trials_per_condition"] != 200:
               raise SystemExit("unexpected trial count")
-          if len(report["conditions"]) != 3:
-              raise SystemExit("expected clean, 10%, and 25% adversarial conditions")
+          if len(report["conditions"]) != 6:
+              raise SystemExit("expected 3 attack rates across 2 split modes")
           for condition in report["conditions"]:
+              if condition["split_mode"] not in ("random", "range_shift"):
+                  raise SystemExit(f"unknown split mode: {condition}")
               for metric in ("false_acceptance", "heldout_failure"):
                   rate = condition[f"{metric}_rate"]
                   low, high = condition[f"{metric}_95ci_wilson"]
