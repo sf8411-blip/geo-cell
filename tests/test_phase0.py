@@ -190,6 +190,27 @@ class AdversarialPhase0Tests(unittest.TestCase):
         e.archive.checkpoints[1]={"step":1,"state":payload,"state_hash":__import__("evo_geo.core",fromlist=["sha256_hex"]).sha256_hex(canonical_bytes(payload))}
         self.assertFalse(e.archive.verify())
 
+    def test_archive_load_rejects_missing_periodic_checkpoint(self):
+        import json
+        e=Engine(contract=Contract(checkpoint_interval=1))
+        e.step(zero(e.state))
+        with tempfile.TemporaryDirectory() as td:
+            p=Path(td)/"archive.json"
+            e.archive.save_atomic(p)
+            d=json.loads(p.read_text(encoding="utf-8"))
+            d["checkpoints"].pop("1")
+            p.write_text(json.dumps(d),encoding="utf-8")
+            with self.assertRaises(ValueError):
+                Archive.load(p)
+
+    def test_archive_verify_rejects_incomplete_trailing_step(self):
+        e=Engine()
+        e.step(zero(e.state))
+        bodies=[dict(x) for x in e.archive.events[:-1]]
+        a=Archive()
+        a.events=self.reseal(bodies)
+        self.assertFalse(a.verify())
+
     def test_archive_load_rejects_noncanonical_checkpoint_key(self):
         import json
         e=Engine(contract=Contract(checkpoint_interval=1))
