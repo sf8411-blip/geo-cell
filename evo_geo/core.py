@@ -51,6 +51,8 @@ def canonical_bytes(obj):
 
 def sha256_hex(data): return hashlib.sha256(data).hexdigest()
 
+_UNSET = object()
+
 def round_even_div(a: int, b: int) -> int:
     if type(a) is not int or type(b) is not int: raise TypeError("integer operands required; bool is not accepted")
     if b <= 0: raise ValueError("denominator must be positive")
@@ -546,16 +548,18 @@ class Archive:
             if state.step!=step or snapshots.get(step)!=state_to_dict(state):
                 return False
         return True
-    def save_atomic(self, path, expected_current_sha256=None):
+    def save_atomic(self, path, expected_current_sha256=_UNSET):
         """Atomically persist under a process lock.
 
-        If expected_current_sha256 is provided, compare-and-swap semantics reject stale
-        writers. The digest is over the exact existing file bytes; use None only when
-        intentionally allowing an unconditional replacement. A missing destination is
-        represented by the literal expected value "missing".
+        Safe default: an omitted expectation only permits creating a missing destination.
+        For an existing archive, callers must supply its exact-byte SHA-256 digest. Pass
+        "missing" to require absence, or pass None explicitly only to opt into unconditional
+        last-writer-wins replacement. The digest is checked under the cooperative process lock.
         """
         dest = Path(path)
         dest.parent.mkdir(parents=True, exist_ok=True)
+        if expected_current_sha256 is _UNSET:
+            expected_current_sha256 = "missing"
         if expected_current_sha256 is not None and expected_current_sha256 != "missing":
             if (not isinstance(expected_current_sha256, str) or len(expected_current_sha256) != 64
                     or any(ch not in "0123456789abcdef" for ch in expected_current_sha256)):
