@@ -35,6 +35,7 @@ class OperatorDiscoveryTests(unittest.TestCase):
         for x,y in [(True,1),(17,1),(0,True),(0,2)]:
             with self.assertRaises(ValueError): Observation(x,y)
         with self.assertRaises(ValueError): enumerate_candidates(0,10)
+        with self.assertRaises(ValueError): enumerate_candidates(5,10)
         with self.assertRaises(ValueError): enumerate_candidates(2,0)
     def test_nonbinary_candidate_output_rejected(self):
         expr=next(e for e in enumerate_candidates(3,1000) if e.canonical()=="(x + 1)")
