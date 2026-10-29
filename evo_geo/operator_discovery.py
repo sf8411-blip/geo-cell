@@ -76,7 +76,7 @@ def _binary(op, left, right, kind):
     return Expr(op, (left, right), kind=kind)
 
 def enumerate_candidates(max_cost: int = 4, max_candidates: int = 2000):
-    if type(max_cost) is not int or max_cost < 1: raise ValueError("max_cost must be positive")
+    if type(max_cost) is not int or not 1 <= max_cost <= 4: raise ValueError("max_cost must be an integer in [1, 4] for the bounded Gate B grammar")
     if type(max_candidates) is not int or max_candidates < 1: raise ValueError("max_candidates must be positive")
     by_cost = {1: {e.canonical(): e for e in LEAVES}}
     ordered = sorted(by_cost[1].values(), key=lambda e: e.canonical())
