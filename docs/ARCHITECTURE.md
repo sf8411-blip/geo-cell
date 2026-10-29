@@ -24,7 +24,7 @@ StepInputs
 
 ## Transaction caveat
 
-Input validation, candidate-state construction, and event-bundle preparation occur before the live state is replaced. The in-memory event append and state swap are separate Python operations, not a database transaction. Periodic checkpoint creation occurs after commit. If checkpoint creation fails, the step may already be committed. Durable archive save uses temporary-file + fsync + atomic replace, but concurrent writers and all hardware failure modes are outside this guarantee.
+Input validation, candidate-state construction, event-bundle sealing, and checkpoint staging occur before publishing the step. Publication assigns staged events, staged checkpoints, then the new state; this is a single-threaded commit convention, not a database transaction or thread-safe atomic primitive. Durable archive save writes and fsyncs a same-directory temporary file, atomically replaces the destination, then fsyncs the parent directory on POSIX. If a failure occurs after replacement, the new archive may be visible while crash durability is uncertain. Concurrent writers and hardware/filesystem failure modes remain outside the guarantee.
 
 ## Audit caveat
 
