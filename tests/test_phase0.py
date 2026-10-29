@@ -166,3 +166,60 @@ class AdversarialPhase0Tests(unittest.TestCase):
         s["vertices"][1]["x"]=s["vertices"][0]["x"]
         s["vertices"][1]["y"]=s["vertices"][0]["y"]
         with self.assertRaises(ValueError): state_from_dict(s)
+
+    def test_rehashed_history_with_missing_committed_step_rejected(self):
+        e=Engine()
+        for _ in range(3):
+            e.step(zero(e.state))
+        bodies=[dict(x) for x in e.archive.events if x.get("step") != 2]
+        a=Archive()
+        a.events=self.reseal(bodies)
+        self.assertFalse(a.verify())
+
+    def test_archive_load_rejects_noncanonical_checkpoint_key(self):
+        import json
+        e=Engine(contract=Contract(checkpoint_interval=1))
+        e.step(zero(e.state))
+        with tempfile.TemporaryDirectory() as td:
+            p=Path(td)/"archive.json"
+            e.archive.save_atomic(p)
+            d=json.loads(p.read_text(encoding="utf-8"))
+            d["checkpoints"]["01"]=d["checkpoints"].pop("1")
+            p.write_text(json.dumps(d),encoding="utf-8")
+            with self.assertRaises(ValueError):
+                Archive.load(p)
+
+    def test_archive_load_rejects_boolean_schema_version(self):
+        import json
+        e=Engine()
+        e.step(zero(e.state))
+        with tempfile.TemporaryDirectory() as td:
+            p=Path(td)/"archive.json"
+            e.archive.save_atomic(p)
+            d=json.loads(p.read_text(encoding="utf-8"))
+            d["schema_version"]=True
+            p.write_text(json.dumps(d),encoding="utf-8")
+            with self.assertRaises(ValueError):
+                Archive.load(p)
+
+    def test_storage_failures_preserve_previous_archive(self):
+        from unittest.mock import patch
+        import evo_geo.core as core
+        e=Engine(contract=Contract(checkpoint_interval=1))
+        e.step(zero(e.state))
+        with tempfile.TemporaryDirectory() as td:
+            p=Path(td)/"archive.json"
+            e.archive.save_atomic(p)
+            original=Archive.load(p)
+            e.step(zero(e.state))
+            for failure_point in ("fsync","replace"):
+                with self.subTest(failure_point=failure_point):
+                    target=core.os.fsync if failure_point=="fsync" else core.os.replace
+                    with patch("evo_geo.core.os."+failure_point, side_effect=OSError("injected storage failure")):
+                        with self.assertRaises(OSError):
+                            e.archive.save_atomic(p)
+                    recovered=Archive.load(p)
+                    self.assertEqual(len(recovered.events),len(original.events))
+                    self.assertEqual(recovered.events,original.events)
+                    self.assertEqual(recovered.checkpoints,original.checkpoints)
+                    self.assertEqual([x for x in Path(td).iterdir() if x.name.endswith(".tmp")],[])
