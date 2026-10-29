@@ -39,6 +39,14 @@ class Contract:
     A_MAX_Q: int = 3277
     checkpoint_interval: int = 10
     max_coordinate_abs: int = 10**9
+    def __post_init__(self):
+        if not isinstance(self.spec_version,str) or not self.spec_version:
+            raise ValueError("spec_version must be a non-empty string")
+        integer_fields=("Q","R_Q","R_MAX_Q","H_Q","D_ADD_Q","D_REMOVE_Q","A_MAX_Q","checkpoint_interval","max_coordinate_abs")
+        if any(type(getattr(self,k)) is not int for k in integer_fields):
+            raise TypeError("contract numeric fields must be integers; bool is not accepted")
+        if self.Q<=0 or self.R_Q<=0 or self.R_MAX_Q<self.R_Q or self.H_Q<=0 or self.D_ADD_Q<=0 or self.D_REMOVE_Q<=self.D_ADD_Q or self.A_MAX_Q<0 or self.checkpoint_interval<0 or self.max_coordinate_abs<=0:
+            raise ValueError("invalid contract bounds")
     @property
     def r2(self): return self.R_Q**2
     @property
@@ -92,21 +100,48 @@ def state_to_dict(s):
     return {"step":s.step,"vertices":[{"id":v.id,"x":v.x,"y":v.y,"special":v.special} for _,v in sorted(s.vertices.items())],"edges":[list(e) for e in sorted(s.edges)],"next_vertex_id":s.next_vertex_id,"processed_requests":{k:s.processed_requests[k] for k in sorted(s.processed_requests)}}
 
 def state_from_dict(d):
-    if not isinstance(d,dict) or not {"step","vertices","edges","next_vertex_id"}.issubset(d): raise ValueError("state schema missing fields")
-    if type(d["step"]) is not int or type(d["next_vertex_id"]) is not int or not isinstance(d["vertices"],list) or not isinstance(d["edges"],list): raise ValueError("invalid state schema")
+    required={"step","vertices","edges","next_vertex_id","processed_requests"}
+    if not isinstance(d,dict) or set(d)!=required:
+        raise ValueError("invalid state schema")
+    if type(d["step"]) is not int or d["step"]<0 or type(d["next_vertex_id"]) is not int:
+        raise ValueError("invalid state counters")
+    if not isinstance(d["vertices"],list) or not isinstance(d["edges"],list) or not isinstance(d["processed_requests"],dict):
+        raise ValueError("invalid state collections")
     vertices={}
+    positions=set()
     for row in d["vertices"]:
-        if not isinstance(row,dict) or set(row)!={"id","x","y","special"} or any(type(row[k]) is not int for k in ("id","x","y")) or type(row["special"]) is not bool: raise ValueError("invalid vertex")
-        if row["id"] in vertices: raise ValueError("duplicate vertex ID")
+        if not isinstance(row,dict) or set(row)!={"id","x","y","special"} or any(type(row[k]) is not int for k in ("id","x","y")) or type(row["special"]) is not bool:
+            raise ValueError("invalid vertex")
+        if row["id"]<=0 or row["id"] in vertices or (row["x"],row["y"]) in positions:
+            raise ValueError("duplicate or invalid vertex identity/position")
         vertices[row["id"]]=Vertex(row["id"],row["x"],row["y"],row["special"])
+        positions.add((row["x"],row["y"]))
+    if d["next_vertex_id"]<=max(vertices,default=0):
+        raise ValueError("non-monotonic next vertex ID")
+    if {i for i,v in vertices.items() if v.special} != special_ids(vertices):
+        raise ValueError("special status inconsistent")
     edges=set()
     for row in d["edges"]:
-        if not isinstance(row,list) or len(row)!=2 or any(type(x) is not int for x in row): raise ValueError("invalid edge")
-        e=tuple(row)
-        if e in edges: raise ValueError("duplicate edge")
-        edges.add(e)
-    pr=d.get("processed_requests",{})
-    if not isinstance(pr,dict) or any(not isinstance(k,str) or not isinstance(v,dict) for k,v in pr.items()): raise ValueError("invalid processed requests")
+        if not isinstance(row,list) or len(row)!=2 or any(type(x) is not int for x in row):
+            raise ValueError("invalid edge")
+        a,b=row
+        if a>=b or a not in vertices or b not in vertices or (a,b) in edges:
+            raise ValueError("non-canonical, dangling, or duplicate edge")
+        edges.add((a,b))
+    pr=d["processed_requests"]
+    for rid,result in pr.items():
+        if not isinstance(rid,str) or not rid or not isinstance(result,dict):
+            raise ValueError("invalid processed request")
+        if result.get("status") not in ("accepted","rejected") or not isinstance(result.get("payload"),dict):
+            raise ValueError("invalid processed request result")
+        payload=result["payload"]
+        if set(payload)!={"parent_id","child_x","child_y"} or any(type(payload[k]) is not int for k in payload):
+            raise ValueError("invalid processed request payload")
+        if result["status"]=="accepted":
+            if set(result)!={"status","child_id","payload"} or type(result["child_id"]) is not int or result["child_id"] not in vertices:
+                raise ValueError("invalid accepted request result")
+        elif set(result)!={"status","reason","payload"} or not isinstance(result["reason"],str) or not result["reason"]:
+            raise ValueError("invalid rejected request result")
     return State(d["step"],vertices,edges,d["next_vertex_id"],{k:dict(v) for k,v in pr.items()})
 
 def dist2(a,b): return (a.x-b.x)**2+(a.y-b.y)**2
@@ -139,14 +174,42 @@ class Archive:
     def checkpoint(self,state):
         payload=state_to_dict(state); cp={"step":state.step,"state":payload,"state_hash":sha256_hex(canonical_bytes(payload))}; self.checkpoints[state.step]=cp; return cp
     def verify(self):
-        prev="0"*64
+        if not verify_chain(self.events):
+            return False
+        previous_step=0
+        snapshots={}
         for e in self.events:
-            if not isinstance(e,dict) or e.get("previous_hash")!=prev: return False
-            body=dict(e); actual=body.pop("event_hash",None)
-            if not isinstance(actual,str) or sha256_hex(canonical_bytes(body))!=actual: return False
-            prev=actual
+            if e.get("type")!="STEP_COMMITTED":
+                continue
+            step=e.get("step")
+            if type(step) is not int or step<=previous_step:
+                return False
+            data=e.get("data")
+            if not isinstance(data,dict) or not isinstance(data.get("state"),dict):
+                return False
+            try:
+                state=state_from_dict(data["state"])
+                Engine(state=state)
+            except (TypeError,ValueError,KeyError):
+                return False
+            if state.step!=step:
+                return False
+            snapshots[step]=state_to_dict(state)
+            previous_step=step
         for step,cp in self.checkpoints.items():
-            if step!=cp.get("step") or sha256_hex(canonical_bytes(cp.get("state")))!=cp.get("state_hash"): return False
+            if type(step) is not int or not isinstance(cp,dict) or set(cp)!={"step","state","state_hash"}:
+                return False
+            if type(cp["step"]) is not int or cp["step"]!=step or not isinstance(cp["state"],dict) or not isinstance(cp["state_hash"],str):
+                return False
+            try:
+                if sha256_hex(canonical_bytes(cp["state"]))!=cp["state_hash"]:
+                    return False
+                state=state_from_dict(cp["state"])
+                Engine(state=state)
+            except (TypeError,ValueError,KeyError):
+                return False
+            if state.step!=step or snapshots.get(step)!=state_to_dict(state):
+                return False
         return True
     def save_atomic(self,path):
         dest=Path(path); dest.parent.mkdir(parents=True,exist_ok=True)
@@ -237,9 +300,17 @@ class Engine:
                 elif edge in edges and d>=c.remove2: edges.remove(edge); ev.append({"step":n,"phase":5,"type":"EDGE_REMOVE","entity_ids":[a,b],"data":{}})
         w.edges=edges; w.step=n; self._validate(w)
         ev.append({"step":n,"phase":8,"type":"STEP_COMMITTED","data":{"state":state_to_dict(w)}})
+        # Stage every in-memory write before publishing any part of the step.
         sealed=self.archive.prepare_bundle(ev)
-        self.archive.commit_bundle(sealed); self.state=w
-        if c.checkpoint_interval>0 and n%c.checkpoint_interval==0: self.archive.checkpoint(w)
+        staged_events=self.archive.events+[dict(item) for item in sealed]
+        staged_checkpoints=dict(self.archive.checkpoints)
+        if c.checkpoint_interval>0 and n%c.checkpoint_interval==0:
+            payload=state_to_dict(w)
+            staged_checkpoints[n]={"step":n,"state":payload,"state_hash":sha256_hex(canonical_bytes(payload))}
+        # Publish the completed bundle as a single commit point.
+        self.archive.events=staged_events
+        self.archive.checkpoints=staged_checkpoints
+        self.state=w
         return w.clone()
 
 
