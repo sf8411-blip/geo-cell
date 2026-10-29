@@ -160,8 +160,20 @@ def clip_to_radius(x,y,radius):
         if corrections>8: raise ArithmeticError("radial clipping safety bound exceeded")
     return nx,ny,True,corrections
 
+def contract_to_dict(c):
+    return {k:getattr(c,k) for k in ("spec_version","Q","R_Q","R_MAX_Q","H_Q","D_ADD_Q","D_REMOVE_Q","A_MAX_Q","checkpoint_interval","max_coordinate_abs")}
+
+def contract_from_dict(d):
+    required={"spec_version","Q","R_Q","R_MAX_Q","H_Q","D_ADD_Q","D_REMOVE_Q","A_MAX_Q","checkpoint_interval","max_coordinate_abs"}
+    if not isinstance(d,dict) or set(d)!=required:
+        raise ValueError("invalid contract schema")
+    return Contract(**d)
+
 class Archive:
-    def __init__(self): self.events=[]; self.checkpoints={}
+    def __init__(self, contract=None):
+        self.contract=contract or Contract()
+        self.events=[]
+        self.checkpoints={}
     def prepare_bundle(self,bundle):
         previous=self.events[-1]["event_hash"] if self.events else "0"*64
         sealed=[]
@@ -174,29 +186,130 @@ class Archive:
     def checkpoint(self,state):
         payload=state_to_dict(state); cp={"step":state.step,"state":payload,"state_hash":sha256_hex(canonical_bytes(payload))}; self.checkpoints[state.step]=cp; return cp
     def verify(self):
-        if not verify_chain(self.events):
+        if not isinstance(self.contract, Contract) or not verify_chain(self.events):
             return False
         previous_step=0
         snapshots={}
+        by_step={}
+        allowed={
+            "STEP_STARTED": (0, {"from_step","contract"}),
+            "MOVE": (1, {"x","y","proposed_x","proposed_y"}),
+            "BOUNDARY_CLIP": (2, {"x","y","corrections"}),
+            "REPLICATION_REPLAY": (3, {"request_id"}),
+            "REPLICATION_REJECT": (3, {"request_id","status","reason","payload"}),
+            "REPLICATION_ACCEPT": (3, {"request_id","status","child_id","payload"}),
+            "SPECIAL_STATUS_CHANGE": (4, {"special"}),
+            "EDGE_ADD": (5, set()),
+            "EDGE_REMOVE": (5, set()),
+            "STEP_COMMITTED": (8, {"state"}),
+        }
         for e in self.events:
-            if e.get("type")!="STEP_COMMITTED":
-                continue
-            step=e.get("step")
-            # A valid archive must contain every committed transition in order.
-            if type(step) is not int or step != previous_step + 1:
+            if not isinstance(e,dict) or set(e) not in (
+                {"step","phase","type","data","previous_hash","event_hash"},
+                {"step","phase","type","entity_ids","data","previous_hash","event_hash"},
+            ):
                 return False
-            data=e.get("data")
-            if not isinstance(data,dict) or not isinstance(data.get("state"),dict):
+            step,phase,kind=e.get("step"),e.get("phase"),e.get("type")
+            if type(step) is not int or step<=0 or type(phase) is not int or kind not in allowed:
                 return False
-            try:
-                state=state_from_dict(data["state"])
-                Engine(state=state)
-            except (TypeError,ValueError,KeyError):
+            expected_phase,keys=allowed[kind]
+            if phase!=expected_phase or not isinstance(e.get("data"),dict) or set(e["data"])!=keys:
                 return False
-            if state.step!=step:
+            has_ids="entity_ids" in e
+            if has_ids:
+                ids=e["entity_ids"]
+                if not isinstance(ids,list) or not ids or any(type(i) is not int or i<=0 for i in ids) or len(set(ids))!=len(ids):
+                    return False
+            if kind in ("STEP_STARTED","REPLICATION_REPLAY","REPLICATION_REJECT","STEP_COMMITTED") and has_ids:
                 return False
-            snapshots[step]=state_to_dict(state)
-            previous_step=step
+            if kind in ("MOVE","BOUNDARY_CLIP","SPECIAL_STATUS_CHANGE","EDGE_ADD","EDGE_REMOVE","REPLICATION_ACCEPT") and not has_ids:
+                return False
+            if kind=="STEP_STARTED":
+                if step!=previous_step+1 or e["data"]["from_step"]!=previous_step or type(e["data"]["from_step"]) is not int:
+                    return False
+                try:
+                    if contract_from_dict(e["data"]["contract"]) != self.contract:
+                        return False
+                except (TypeError,ValueError):
+                    return False
+                by_step[step]=[]
+            elif step not in by_step:
+                return False
+            if by_step.get(step) is not None:
+                by_step[step].append(e)
+            if kind=="MOVE":
+                if len(e["entity_ids"])!=1 or any(type(e["data"][k]) is not int for k in keys):
+                    return False
+            elif kind=="BOUNDARY_CLIP":
+                if len(e["entity_ids"])!=1 or any(type(e["data"][k]) is not int for k in ("x","y","corrections")) or e["data"]["corrections"]<0:
+                    return False
+            elif kind=="SPECIAL_STATUS_CHANGE":
+                if len(e["entity_ids"])!=1 or type(e["data"]["special"]) is not bool:
+                    return False
+            elif kind in ("EDGE_ADD","EDGE_REMOVE"):
+                if len(e["entity_ids"])!=2 or e["entity_ids"][0]>=e["entity_ids"][1] or e["data"]!={}:
+                    return False
+            elif kind in ("REPLICATION_REPLAY","REPLICATION_REJECT","REPLICATION_ACCEPT"):
+                if not isinstance(e["data"].get("request_id"),str) or not e["data"]["request_id"]:
+                    return False
+            if kind=="STEP_COMMITTED":
+                if type(step) is not int or step != previous_step+1:
+                    return False
+                try:
+                    state=state_from_dict(e["data"]["state"])
+                    Engine(state=state,contract=self.contract)
+                except (TypeError,ValueError,KeyError):
+                    return False
+                if state.step!=step:
+                    return False
+                snapshots[step]=state_to_dict(state)
+                previous_step=step
+        if self.events and (not by_step or set(by_step)!=set(range(1,previous_step+1))):
+            return False
+        # Audit event semantics against each committed state, not merely the hash chain.
+        for step,items in by_step.items():
+            if not items or items[0].get("type")!="STEP_STARTED" or items[-1].get("type")!="STEP_COMMITTED":
+                return False
+            phases=[e["phase"] for e in items]
+            if phases!=sorted(phases) or sum(e["type"]=="STEP_STARTED" for e in items)!=1 or sum(e["type"]=="STEP_COMMITTED" for e in items)!=1:
+                return False
+            state=state_from_dict(snapshots[step])
+            state_vertices=state.vertices
+            moves={}
+            for e in items:
+                kind=e["type"]; data=e["data"]; ids=e.get("entity_ids",[])
+                if kind=="MOVE":
+                    i=ids[0]
+                    if i in moves or i not in state_vertices or (data["x"],data["y"])!=(state_vertices[i].x,state_vertices[i].y):
+                        return False
+                    moves[i]=data
+                elif kind=="BOUNDARY_CLIP":
+                    i=ids[0]
+                    if i not in moves or (data["x"],data["y"])!=(moves[i]["x"],moves[i]["y"]):
+                        return False
+                elif kind=="SPECIAL_STATUS_CHANGE":
+                    i=ids[0]
+                    if i not in state_vertices or state_vertices[i].special!=data["special"]:
+                        return False
+                elif kind=="EDGE_ADD" and tuple(ids) not in state.edges:
+                    return False
+                elif kind=="EDGE_REMOVE" and tuple(ids) in state.edges:
+                    return False
+                elif kind in ("REPLICATION_ACCEPT","REPLICATION_REJECT"):
+                    rid=data["request_id"]; result=state.processed_requests.get(rid)
+                    if not isinstance(result,dict) or result.get("status")!=data.get("status") or result.get("payload")!=data.get("payload"):
+                        return False
+                    if kind=="REPLICATION_ACCEPT" and (result.get("child_id")!=data.get("child_id") or ids != [result.get("payload",{}).get("parent_id"),result.get("child_id")]):
+                        return False
+                    if kind=="REPLICATION_REJECT" and result.get("reason")!=data.get("reason"):
+                        return False
+                elif kind=="REPLICATION_REPLAY":
+                    if data["request_id"] not in state.processed_requests:
+                        return False
+            # Every vertex present in the committed state must have moved or been created by an accepted replication.
+            created={e["data"].get("child_id") for e in items if e["type"]=="REPLICATION_ACCEPT"}
+            if set(moves)!=(set(state_vertices)-created):
+                return False
         for step,cp in self.checkpoints.items():
             if type(step) is not int or not isinstance(cp,dict) or set(cp)!={"step","state","state_hash"}:
                 return False
@@ -206,7 +319,7 @@ class Archive:
                 if sha256_hex(canonical_bytes(cp["state"]))!=cp["state_hash"]:
                     return False
                 state=state_from_dict(cp["state"])
-                Engine(state=state)
+                Engine(state=state,contract=self.contract)
             except (TypeError,ValueError,KeyError):
                 return False
             if state.step!=step or snapshots.get(step)!=state_to_dict(state):
@@ -214,7 +327,7 @@ class Archive:
         return True
     def save_atomic(self,path):
         dest=Path(path); dest.parent.mkdir(parents=True,exist_ok=True)
-        payload={"schema_version":1,"events":self.events,"checkpoints":{str(k):v for k,v in sorted(self.checkpoints.items())}}
+        payload={"schema_version":2,"contract":contract_to_dict(self.contract),"events":self.events,"checkpoints":{str(k):v for k,v in sorted(self.checkpoints.items())}}
         fd,tmp=tempfile.mkstemp(prefix="."+dest.name+".",suffix=".tmp",dir=dest.parent)
         try:
             with os.fdopen(fd,"wb") as f: f.write(canonical_bytes(payload)); f.flush(); os.fsync(f.fileno())
@@ -227,8 +340,8 @@ class Archive:
     def load(cls,path):
         d=json.loads(Path(path).read_text(encoding="utf-8"))
         if (not isinstance(d,dict) or type(d.get("schema_version")) is not int
-                or d.get("schema_version") != 1 or not isinstance(d.get("events"),list)
-                or not isinstance(d.get("checkpoints"),dict)):
+                or d.get("schema_version") != 2 or not isinstance(d.get("events"),list)
+                or not isinstance(d.get("checkpoints"),dict) or not isinstance(d.get("contract"),dict)):
             raise ValueError("invalid archive schema")
         checkpoints={}
         for key,value in d["checkpoints"].items():
@@ -238,13 +351,13 @@ class Archive:
             if step in checkpoints:
                 raise ValueError("duplicate checkpoint step")
             checkpoints[step]=value
-        a=cls(); a.events=d["events"]; a.checkpoints=checkpoints
+        a=cls(contract_from_dict(d["contract"])); a.events=d["events"]; a.checkpoints=checkpoints
         if not a.verify(): raise ValueError("archive integrity verification failed")
         return a
 
 class Engine:
     def __init__(self,state=None,contract=None,archive=None):
-        self.contract=contract or Contract(); self.state=(state or initial_state()).clone(); self.archive=archive or Archive(); self._validate(self.state)
+        self.contract=contract or (archive.contract if archive is not None else Contract()); self.state=(state or initial_state()).clone(); self.archive=archive or Archive(self.contract);\n        if self.archive.contract != self.contract: raise ValueError("engine/archive contract mismatch")\n        self._validate(self.state)
     def _validate(self,s):
         c=self.contract
         if type(s.step) is not int or s.step<0: raise ValueError("invalid step")
@@ -272,7 +385,7 @@ class Engine:
             if not isinstance(r,ReplicationRequest) or not isinstance(r.request_id,str) or not r.request_id or any(type(z) is not int for z in (r.parent_id,r.child_x,r.child_y)): raise ValueError("invalid replication request")
             if r.request_id in requests and requests[r.request_id].payload()!=r.payload(): raise ValueError("request ID conflict")
             requests[r.request_id]=r
-        w=start.clone(); n=start.step+1; ev=[{"step":n,"phase":0,"type":"STEP_STARTED","data":{"from_step":start.step}}]
+        w=start.clone(); n=start.step+1; ev=[{"step":n,"phase":0,"type":"STEP_STARTED","data":{"from_step":start.step,"contract":contract_to_dict(c)}}]
         specials=special_ids(start.vertices); proposals={}
         for i in sorted(start.vertices):
             sx,sy=inputs.direct_actions[i]
