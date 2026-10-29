@@ -621,3 +621,15 @@ raise SystemExit(0)
             with self.assertRaises(OSError):
                 with _exclusive_path_lock(link):
                     pass
+
+
+    def test_omitted_expected_digest_refuses_existing_archive(self):
+        e = Engine()
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "archive.json"
+            e.archive.save_atomic(path)
+            original = path.read_bytes()
+            with self.assertRaisesRegex(RuntimeError, "stale overwrite"):
+                e.archive.save_atomic(path)
+            self.assertEqual(path.read_bytes(), original)
+            self.assertTrue(Archive.load(path).verify())
