@@ -91,3 +91,78 @@ class ReplayAndGraphTests(unittest.TestCase):
         e=Engine(s,c); e._validate(e.state)
         e.step(StepInputs({1:(0,0),2:(0,0)},[]))
         self.assertIn((1,2),e.state.edges)
+
+
+class AdversarialPhase0Tests(unittest.TestCase):
+    @staticmethod
+    def reseal(events):
+        from evo_geo import Archive
+        bodies=[]
+        for event in events:
+            body=dict(event)
+            body.pop("previous_hash",None)
+            body.pop("event_hash",None)
+            bodies.append(body)
+        return Archive().prepare_bundle(bodies)
+
+    def test_rehashed_checkpoint_tamper_rejected(self):
+        from evo_geo.replay import replay_from_checkpoint
+        e=Engine(contract=Contract(checkpoint_interval=1))
+        e.step(zero(e.state))
+        cp=dict(e.archive.checkpoints[1])
+        cp["state"]=dict(cp["state"])
+        cp["state"]["step"]=0
+        cp["state_hash"]=__import__("evo_geo.core",fromlist=["sha256_hex"]).sha256_hex(canonical_bytes(cp["state"]))
+        self.assertFalse((lambda a: a.verify())(self._archive_with(e.archive.events,cp)))
+        with self.assertRaises(ValueError):
+            replay_from_checkpoint(cp,e.archive.events,1)
+
+    @staticmethod
+    def _archive_with(events, checkpoint):
+        a=Archive(); a.events=events; a.checkpoints={checkpoint["step"]:checkpoint}; return a
+
+    def test_malformed_snapshot_rehashed_is_rejected(self):
+        e=Engine()
+        e.step(zero(e.state))
+        bodies=[dict(x) for x in e.archive.events]
+        commit=next(x for x in bodies if x.get("type")=="STEP_COMMITTED")
+        commit["data"]["state"]["edges"]=[[999,1000]]
+        a=Archive(); a.events=self.reseal(bodies)
+        self.assertFalse(a.verify())
+
+    def test_duplicate_commit_rehashed_is_rejected(self):
+        e=Engine()
+        e.step(zero(e.state))
+        bodies=[dict(x) for x in e.archive.events]
+        commit=dict(next(x for x in bodies if x.get("type")=="STEP_COMMITTED"))
+        bodies.append(commit)
+        a=Archive(); a.events=self.reseal(bodies)
+        self.assertFalse(a.verify())
+
+    def test_contract_rejects_invalid_numeric_bounds(self):
+        with self.assertRaises(ValueError): Contract(R_Q=-1)
+        with self.assertRaises(TypeError): Contract(Q=True)
+        with self.assertRaises(ValueError): Contract(D_REMOVE_Q=1)
+
+    def test_failed_bundle_preparation_is_transactional(self):
+        e=Engine(contract=Contract(checkpoint_interval=1))
+        before_state=state_to_dict(e.state)
+        before_events=canonical_bytes(e.archive.events)
+        before_checkpoints=dict(e.archive.checkpoints)
+        def fail(_bundle):
+            raise OSError("injected prepare failure")
+        e.archive.prepare_bundle=fail
+        with self.assertRaises(OSError):
+            e.step(zero(e.state))
+        self.assertEqual(state_to_dict(e.state),before_state)
+        self.assertEqual(canonical_bytes(e.archive.events),before_events)
+        self.assertEqual(e.archive.checkpoints,before_checkpoints)
+
+    def test_state_parser_rejects_noncanonical_edge_and_duplicate_position(self):
+        s=state_to_dict(initial_state())
+        s["edges"]=[[2,1]]
+        with self.assertRaises(ValueError): state_from_dict(s)
+        s=state_to_dict(initial_state())
+        s["vertices"][1]["x"]=s["vertices"][0]["x"]
+        s["vertices"][1]["y"]=s["vertices"][0]["y"]
+        with self.assertRaises(ValueError): state_from_dict(s)
