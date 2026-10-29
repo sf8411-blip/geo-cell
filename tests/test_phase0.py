@@ -514,13 +514,17 @@ class TrustConcurrencyHardeningTests(unittest.TestCase):
             e.archive.save_atomic(p, expected_current_sha256="missing")
             e.step(zero(e.state))
             script = (
-                "import os,sys; from evo_geo import Archive; import evo_geo.core as core; "
+                "import os,sys,hashlib; from evo_geo import Archive,Engine,StepInputs; "
+                "from evo_geo.core import state_from_dict; import evo_geo.core as core; "
                 "a=Archive.load(sys.argv[1]); "
+                "last=next(e for e in reversed(a.events) if e['type']=='STEP_COMMITTED'); "
+                "eng=Engine(state=state_from_dict(last['data']['state']),contract=a.contract,archive=a); "
+                "eng.step(StepInputs({i:(0,0) for i in eng.state.vertices},[])); "
+                "expected=hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest(); "
                 "real=core.os.fsync; count=[0]; "
-                "definitely_not_used=0; "
                 "exec('def crash_on_directory_fsync(fd):\\n count[0]+=1\\n if count[0]==2: os._exit(78)\\n return real(fd)'); "
                 "core.os.fsync=crash_on_directory_fsync; "
-                "a.save_atomic(sys.argv[1], expected_current_sha256=__import__('hashlib').sha256(open(sys.argv[1],'rb').read()).hexdigest())"
+                "eng.archive.save_atomic(sys.argv[1], expected_current_sha256=expected)"
             )
             result = subprocess.run([sys.executable, "-c", script, str(p)], check=False)
             self.assertEqual(result.returncode, 78)
