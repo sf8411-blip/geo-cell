@@ -202,6 +202,33 @@ class AdversarialPhase0Tests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 Archive.load(p)
 
+
+    def test_rehashed_move_event_semantic_tamper_rejected(self):
+        e=Engine()
+        e.step(zero(e.state))
+        bodies=[dict(x) for x in e.archive.events]
+        move=next(x for x in bodies if x.get("type")=="MOVE")
+        move["data"]["x"] += 1
+        a=Archive()
+        a.events=self.reseal(bodies)
+        self.assertFalse(a.verify())
+
+    def test_custom_contract_roundtrip_and_replay(self):
+        from evo_geo.replay import replay_from_checkpoint
+        c=Contract(R_MAX_Q=170000, max_coordinate_abs=200000, checkpoint_interval=1)
+        e=Engine(contract=c)
+        for _ in range(2):
+            e.step(zero(e.state))
+        with tempfile.TemporaryDirectory() as td:
+            p=Path(td)/"custom.json"
+            e.archive.save_atomic(p)
+            restored=Archive.load(p)
+            self.assertEqual(restored.contract,c)
+            recovered=replay_from_checkpoint(restored.checkpoints[1],restored.events,2)
+            self.assertEqual(state_to_dict(recovered),state_to_dict(e.state))
+        with self.assertRaises(ValueError):
+            replay_from_checkpoint(e.archive.checkpoints[1],e.archive.events,2,contract=Contract())
+
     def test_storage_failures_preserve_previous_archive(self):
         from unittest.mock import patch
         import evo_geo.core as core
