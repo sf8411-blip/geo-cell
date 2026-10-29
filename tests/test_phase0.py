@@ -158,6 +158,31 @@ class AdversarialPhase0Tests(unittest.TestCase):
         self.assertEqual(canonical_bytes(e.archive.events),before_events)
         self.assertEqual(e.archive.checkpoints,before_checkpoints)
 
+    def test_engine_rejects_malformed_in_memory_request_ledger(self):
+        from evo_geo.core import State
+        s=initial_state()
+        s.processed_requests["bad"]="not-a-result"
+        with self.assertRaises(ValueError):
+            Engine(state=s)
+
+    def test_engine_rejects_accepted_ledger_child_position_mismatch(self):
+        from evo_geo.core import Vertex
+        s=initial_state()
+        s.vertices[21]=Vertex(21,170000,0,False)
+        s.next_vertex_id=22
+        s.processed_requests["accepted"]={
+            "status":"accepted","child_id":21,
+            "payload":{"parent_id":1,"child_x":170001,"child_y":0},
+        }
+        with self.assertRaises(ValueError):
+            Engine(state=s)
+
+    def test_archive_verify_returns_false_for_malformed_checkpoint_container(self):
+        e=Engine()
+        e.step(zero(e.state))
+        e.archive.checkpoints=None
+        self.assertFalse(e.archive.verify())
+
     def test_state_parser_rejects_noncanonical_edge_and_duplicate_position(self):
         s=state_to_dict(initial_state())
         s["edges"]=[[2,1]]
