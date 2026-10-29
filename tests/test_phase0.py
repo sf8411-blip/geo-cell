@@ -177,6 +177,24 @@ class AdversarialPhase0Tests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Engine(state=s)
 
+    def test_engine_rejects_accepted_request_for_original_vertex(self):
+        s=initial_state()
+        parent=s.vertices[1]
+        s.processed_requests["forged"]={
+            "status":"accepted","child_id":1,
+            "payload":{"parent_id":999,"child_x":parent.x,"child_y":parent.y},
+        }
+        with self.assertRaises(ValueError):
+            Engine(state=s)
+
+    def test_engine_rejects_replicated_vertex_without_accepted_ledger_entry(self):
+        from evo_geo.core import Vertex
+        s=initial_state()
+        s.vertices[21]=Vertex(21,170000,0,False)
+        s.next_vertex_id=22
+        with self.assertRaises(ValueError):
+            Engine(state=s)
+
     def test_archive_verify_returns_false_for_malformed_checkpoint_container(self):
         e=Engine()
         e.step(zero(e.state))
