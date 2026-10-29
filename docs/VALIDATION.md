@@ -7,7 +7,7 @@ A passing suite means only that the checked properties held for these cases and 
 Known limits:
 - The influence kernel is linear in squared distance by design; it is not Gaussian/exponential.
 - Archive atomic replacement assumes a single filesystem and does not promise survival of every hardware/filesystem failure or concurrent writers.
-- Full-state snapshots are recorded at STEP_COMMITTED; a formal replay-from-checkpoint API and crash-injection testing remain follow-up acceptance work.
+- Full-state snapshots are recorded at STEP_COMMITTED, and a replay-from-checkpoint API is implemented and unit-tested. Crash-injection testing and replay under malformed-but-rehashed logs remain follow-up acceptance work.
 - No independent code audit or scalability benchmark has been completed.
 - No learning, evolution, semantic transfer, consciousness, or AGI capability is implemented or evidenced.
 
