@@ -19,7 +19,7 @@ A plain SHA-256 digest protects against accidental or unanchored changes only wh
 
 ## 2. Writer protocol
 
-- For read-modify-write workflows, calculate the SHA-256 digest of the exact bytes read and pass it as `expected_current_sha256` to `save_atomic`. Use `"missing"` only when the destination was absent.
+- For read-modify-write workflows, calculate the SHA-256 digest of the exact bytes read and pass it as `expected_current_sha256` to `save_atomic`. The default only permits creating a missing destination. Use `"missing"` to require absence explicitly, and pass `None` only to deliberately opt into unconditional replacement.
 - Never delete or rotate the persistent `<archive>.lock` file while any process may use it.
 - Treat network filesystems and non-cooperating writers as outside the lock guarantee. For multiple hosts, use a storage system with documented transactional compare-and-swap or a distributed lock with fencing tokens; a local advisory lock is not a distributed consensus mechanism.
 - After an uncertain post-rename error, reload and verify the destination before deciding whether to retry. Retrying with a stale expected digest should fail closed.
