@@ -213,6 +213,14 @@ def contract_from_dict(d):
         raise ValueError("invalid contract schema")
     return Contract(**d)
 
+def genesis_anchor_sha256(state, contract):
+    """Digest the canonical genesis state AND execution contract for external pinning."""
+    if not isinstance(state, State) or not isinstance(contract, Contract):
+        raise TypeError("State and Contract instances are required")
+    validated = state_from_dict(state_to_dict(state))
+    payload = {"contract": contract_to_dict(contract), "start_state": state_to_dict(validated)}
+    return sha256_hex(canonical_bytes(payload))
+
 class Archive:
     def __init__(self, contract=None):
         self.contract=contract or Contract()
@@ -230,10 +238,11 @@ class Archive:
     def checkpoint(self,state):
         payload=state_to_dict(state); cp={"step":state.step,"state":payload,"state_hash":sha256_hex(canonical_bytes(payload))}; self.checkpoints[state.step]=cp; return cp
     def verify_genesis_anchor(self, expected_sha256):
-        """Verify the first recorded start-state against an externally trusted SHA-256 anchor.
+        """Verify the first recorded state AND contract against an external SHA-256 anchor.
 
-        The expected digest must arrive through a separately trusted channel. This method
-        binds the archive to that digest; it does not itself establish who created the anchor.
+        Generate the expected digest independently with genesis_anchor_sha256(state, contract).
+        The expected digest must arrive through a separately trusted channel; this method does
+        not itself establish who created the anchor.
         """
         if (not isinstance(expected_sha256, str) or len(expected_sha256) != 64
                 or any(ch not in "0123456789abcdef" for ch in expected_sha256)):
@@ -244,9 +253,8 @@ class Archive:
         if first is None:
             return False
         try:
-            genesis = first["data"]["start_state"]
-            state_from_dict(genesis)
-            actual = sha256_hex(canonical_bytes(genesis))
+            genesis = state_from_dict(first["data"]["start_state"])
+            actual = genesis_anchor_sha256(genesis, self.contract)
         except (KeyError, TypeError, ValueError):
             return False
         return actual == expected_sha256
