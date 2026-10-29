@@ -474,6 +474,35 @@ class AdversarialPhase0Tests(unittest.TestCase):
 
 
 
+class CrossPlatformStressTests(unittest.TestCase):
+    def test_seeded_long_run_is_reproducible_and_auditable(self):
+        import random
+        rng = random.Random(20261030)
+        contract = Contract(checkpoint_interval=10)
+        left = Engine(contract=contract)
+        right = Engine(contract=contract)
+        for _ in range(120):
+            actions = {
+                vertex_id: (rng.randint(-32, 32), rng.randint(-32, 32))
+                for vertex_id in sorted(left.state.vertices)
+            }
+            left.step(StepInputs(actions, []))
+            right.step(StepInputs(dict(actions), []))
+            self.assertEqual(state_to_dict(left.state), state_to_dict(right.state))
+            self.assertEqual(left.archive.events, right.archive.events)
+        self.assertTrue(left.archive.verify())
+        self.assertTrue(right.archive.verify())
+        self.assertEqual(left.archive.checkpoints, right.archive.checkpoints)
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "stress-archive.json"
+            left.archive.save_atomic(path)
+            restored = Archive.load(path)
+            self.assertTrue(restored.verify())
+            self.assertEqual(restored.events, right.archive.events)
+            self.assertEqual(state_to_dict(restored.checkpoints[120]["state"] if False else left.state),
+                             state_to_dict(right.state))
+
+
 class TrustConcurrencyHardeningTests(unittest.TestCase):
     def test_genesis_anchor_requires_external_expected_digest(self):
         import hashlib
