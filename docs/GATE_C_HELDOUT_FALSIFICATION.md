@@ -1,0 +1,49 @@
+# Gate C — frozen-candidate falsification and held-out benchmark
+
+## Status
+
+This is an experimental benchmark harness layered on the Gate B bounded enumerator. A green CI run means the code and tests executed successfully; it does **not** establish generalization, open-ended operator discovery, intelligence, or AGI.
+
+## Leakage boundary
+
+1. `run_trial` constructs training observations and passes only those observations to Gate B `search`.
+2. It records the selected expression, candidate ID, grammar version, and training-data digest as a frozen candidate record.
+3. Only after the record is frozen does the benchmark construct held-out labels and score the fixed prediction vector.
+4. Held-out failures are retained as explicit counterexamples. If a frozen candidate fails, the disposition is `rejected_by_heldout_counterexample`.
+5. The scorer does not call search again, mutate the expression, or use held-out labels to repair the candidate. Any later revision must be a separate run and must be evaluated against fresh held-out data.
+
+The Python API is a software boundary rather than a security sandbox against a malicious process. The current benchmark uses deterministic synthetic targets and does not claim cryptographic isolation of evaluator labels.
+
+## Frozen protocol
+
+- Input domain: integers -16 through 16.
+- Training split: integers -8 through 8.
+- Held-out split: integers -16 through -9 and 9 through 16.
+- Target families: parity, threshold, negative/non-negative partition, and deterministic seeded-noise control.
+- Grammar, maximum syntax cost, candidate budget, and minimum distinct input count are explicit configuration.
+- Default seed: `20261030`.
+- Baselines: fixed zero, fixed one, identity expression where executable under the binary-output contract, and seeded random-order bounded candidate search selected using training labels only.
+- Metrics: training error when available, held-out error/count, abstentions, counterexample records, candidate identity, data digests, and baseline scores.
+- The report is JSON serializable and includes a SHA-256 digest over the report payload before the digest field is added.
+
+## Important interpretation limits
+
+- The held-out split is an extrapolation/distribution-shift test over a tiny bounded integer domain, not evidence of broad generalization.
+- The random baseline is a simple diagnostic, not a complete state-of-the-art comparator.
+- An out-of-grammar target is not yet a full benchmark family with a preregistered proof that every candidate in the grammar must fail. The seeded-noise control measures false-fit risk but is not a formal out-of-grammar certificate.
+- A report digest detects accidental changes only when the expected digest is preserved independently; it does not authenticate the producer.
+- The current provenance IDs and data hashes do not prove independent data generation.
+- Gate C does not mutate the grammar, transfer rules between cells, or automatically promote any candidate.
+
+## Acceptance and failure policy
+
+Do not declare Gate C scientifically passed solely because CI is green. Inspect the archived machine-readable report. At minimum, verify:
+- the train/test overlap is empty;
+- the seed, budgets, grammar version, and dataset digests are recorded;
+- the frozen candidate identity is recorded before scoring;
+- a held-out contradiction remains visible and rejects the candidate rather than triggering silent repair;
+- abstention is reported, not counted as a correct prediction;
+- all baseline results and per-family outcomes are preserved;
+- repeated runs with the same configuration produce identical report objects.
+
+A run that has no selected candidate is a valid abstention result, not a successful discovery. A run that predicts poorly on held-out data is a falsification result, not something to hide or tune away. Thresholds must be preregistered before drawing comparative conclusions.
