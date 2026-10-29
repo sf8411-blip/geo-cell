@@ -75,16 +75,16 @@ class LocalHypothesis:
     rule: str
     proposer: int
     proposal_id: str
-    observations: dict[int, int] = field(default_factory=dict)
+    observations: list[Observation] = field(default_factory=list)
     status: str = "pending"
     retractions: int = 0
 
     def evaluate(self, min_support: int) -> str:
-        if any(predict(self.rule, x) != y for x, y in self.observations.items()):
+        if any(predict(self.rule, observation.x) != observation.y for observation in self.observations):
             if self.status == "accepted":
                 self.retractions += 1
             self.status = "rejected"
-        elif len(self.observations) >= min_support:
+        elif len({observation.x for observation in self.observations}) >= min_support:
             self.status = "accepted"
         else:
             self.status = "pending"
@@ -132,8 +132,9 @@ class EvidenceCell:
             )
         else:
             hypothesis = self.hypotheses[message.hypothesis_id]
-            for observation in message.observations:
-                hypothesis.observations[observation.x] = observation.y
+            # Preserve every observation. Conflicting reports for the same x must
+            # not overwrite one another and erase a counterexample.
+            hypothesis.observations.extend(message.observations)
             hypothesis.evaluate(min_support)
 
     def _drain(self, min_support: int) -> None:
