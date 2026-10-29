@@ -293,6 +293,11 @@ class Archive:
             phases=[e["phase"] for e in items]
             if phases!=sorted(phases) or sum(e["type"]=="STEP_STARTED" for e in items)!=1 or sum(e["type"]=="STEP_COMMITTED" for e in items)!=1:
                 return False
+            for phase,field in ((1,"entity_ids"),(2,"entity_ids"),(4,"entity_ids"),(5,"entity_ids")):
+                rows=[e for e in items if e["phase"]==phase]
+                keys=[tuple(e[field]) for e in rows]
+                if keys!=sorted(keys):
+                    return False
             state=state_from_dict(snapshots[step])
             start_state=state_from_dict(start_snapshots[step])
             state_vertices=state.vertices
