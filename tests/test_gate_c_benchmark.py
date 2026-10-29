@@ -38,12 +38,21 @@ class GateCBenchmarkTests(unittest.TestCase):
         self.assertIn("candidate_id", result["frozen_candidate"])
         self.assertIn("expression", result["frozen_candidate"])
 
+
+    def test_adversarial_heldout_shift_rejects_frozen_rule(self):
+        result = run_trial("heldout_flip", TrialConfig(seed=5, candidate_budget=1000))
+        self.assertEqual(result["frozen_candidate"]["expression"], "(x % 2)")
+        self.assertEqual(result["heldout"]["error_rate"], 1.0)
+        self.assertEqual(result["disposition"], "rejected_by_heldout_counterexample")
+        self.assertEqual(result["counterexample_audit"]["status"], "rejected")
+        self.assertEqual(result["counterexample_audit"]["contradictions"], result["heldout"]["counterexamples"])
+
     def test_benchmark_report_replays_byte_for_byte(self):
         config = TrialConfig(seed=11, candidate_budget=250)
         first = run_benchmark(config)
         second = run_benchmark(config)
         self.assertEqual(first, second)
-        self.assertEqual(first["trial_count"], 4)
+        self.assertEqual(first["trial_count"], 5)
         self.assertTrue(first["report_digest"])
 
     def test_invalid_budgets_rejected(self):
