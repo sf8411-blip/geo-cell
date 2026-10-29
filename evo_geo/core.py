@@ -191,6 +191,7 @@ class Archive:
         previous_step=0
         snapshots={}
         start_snapshots={}
+        action_snapshots={}
         by_step={}
         allowed={
             "STEP_STARTED": (0, {"from_step","contract","start_state","actions"}),
@@ -250,6 +251,7 @@ class Archive:
                 if step>1 and state_to_dict(start_state)!=snapshots.get(step-1):
                     return False
                 start_snapshots[step]=state_to_dict(start_state)
+                action_snapshots[step]=parsed_actions
                 by_step[step]=[]
             elif step not in by_step:
                 return False
