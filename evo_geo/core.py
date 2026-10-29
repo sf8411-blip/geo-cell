@@ -341,6 +341,13 @@ class Archive:
         try:
             with os.fdopen(fd,"wb") as f: f.write(canonical_bytes(payload)); f.flush(); os.fsync(f.fileno())
             os.replace(tmp,dest)
+            # Persist the directory entry after the atomic rename on POSIX.
+            # If this fsync fails, the new file may already be visible; callers
+            # must treat durability as uncertain and re-open/verify the archive.
+            if os.name == "posix":
+                dir_fd=os.open(dest.parent,os.O_RDONLY)
+                try: os.fsync(dir_fd)
+                finally: os.close(dir_fd)
         except BaseException:
             try: os.unlink(tmp)
             except FileNotFoundError: pass
