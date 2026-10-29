@@ -555,8 +555,10 @@ class Engine:
                 if set(result)!={"status","child_id","payload"} or type(result["child_id"]) is not int:
                     raise ValueError("invalid accepted request result")
                 child_id=result["child_id"]
-                if child_id not in s.vertices or child_id in accepted_children:
-                    raise ValueError("invalid or duplicate accepted child ID")
+                parent_id=payload["parent_id"]
+                if (child_id not in s.vertices or child_id <= len(_INITIAL)
+                        or child_id in accepted_children or parent_id not in s.vertices):
+                    raise ValueError("invalid accepted child or parent ID")
                 child=s.vertices[child_id]
                 if (child.x,child.y)!=(payload["child_x"],payload["child_y"]):
                     raise ValueError("accepted request does not match child position")
@@ -566,6 +568,8 @@ class Engine:
                         not isinstance(result["reason"],str) or
                         result["reason"] not in allowed_rejection_reasons):
                     raise ValueError("invalid rejected request result")
+        if accepted_children != {i for i in s.vertices if i > len(_INITIAL)}:
+            raise ValueError("replicated vertices and accepted request ledger disagree")
     def step(self,inputs):
         c=self.contract; start=self.state; self._validate(start)
         if not isinstance(inputs,StepInputs): raise TypeError("StepInputs required")
