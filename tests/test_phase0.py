@@ -176,6 +176,20 @@ class AdversarialPhase0Tests(unittest.TestCase):
         a.events=self.reseal(bodies)
         self.assertFalse(a.verify())
 
+    def test_archive_verify_rejects_missing_periodic_checkpoint(self):
+        e=Engine(contract=Contract(checkpoint_interval=1))
+        e.step(zero(e.state))
+        self.assertTrue(e.archive.verify())
+        del e.archive.checkpoints[1]
+        self.assertFalse(e.archive.verify())
+
+    def test_archive_verify_rejects_unexpected_checkpoint_when_disabled(self):
+        e=Engine(contract=Contract(checkpoint_interval=0))
+        e.step(zero(e.state))
+        payload=state_to_dict(e.state)
+        e.archive.checkpoints[1]={"step":1,"state":payload,"state_hash":__import__("evo_geo.core",fromlist=["sha256_hex"]).sha256_hex(canonical_bytes(payload))}
+        self.assertFalse(e.archive.verify())
+
     def test_archive_load_rejects_noncanonical_checkpoint_key(self):
         import json
         e=Engine(contract=Contract(checkpoint_interval=1))
