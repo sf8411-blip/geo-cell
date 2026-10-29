@@ -540,6 +540,8 @@ class TrustConcurrencyHardeningTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             path = root / "archive.json"
+            barrier = root / "barrier"
+            barrier.mkdir()
             e.archive.save_atomic(path, expected_current_sha256="missing")
             expected = hashlib.sha256(path.read_bytes()).hexdigest()
             script = r"""
@@ -566,7 +568,7 @@ except RuntimeError as exc:
 raise SystemExit(0)
 """
             procs = [
-                subprocess.Popen([sys.executable, "-c", script, str(path), expected, str(n), str(root)])
+                subprocess.Popen([sys.executable, "-c", script, str(path), expected, str(n), str(barrier)])
                 for n in (1, 2)
             ]
             codes = [p.wait(timeout=20) for p in procs]
