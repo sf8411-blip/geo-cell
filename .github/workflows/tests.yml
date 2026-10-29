@@ -32,3 +32,40 @@ jobs:
         with:
           name: phase0-smoke-${{ matrix.os }}-python-${{ matrix.python-version }}
           path: phase0-smoke.json
+
+  cross-platform-determinism:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: phase0-smoke-*
+          path: smoke-artifacts
+      - name: Compare deterministic smoke outputs from all OS/Python jobs
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          files = sorted(Path("smoke-artifacts").rglob("phase0-smoke.json"))
+          if len(files) != 9:
+              raise SystemExit(f"expected 9 platform artifacts, found {len(files)}")
+          records = []
+          for path in files:
+              raw = path.read_bytes()
+              data = json.loads(raw)
+              if data.get("archive_valid") is not True:
+                  raise SystemExit(f"invalid archive flag in {path}")
+              normalized = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+              records.append((str(path), hashlib.sha256(normalized).hexdigest()))
+          digests = {digest for _, digest in records}
+          for path, digest in records:
+              print(f"{digest}  {path}")
+          if len(digests) != 1:
+              raise SystemExit("cross-platform deterministic outputs differ")
+          PY
