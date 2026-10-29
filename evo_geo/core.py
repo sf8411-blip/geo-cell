@@ -193,7 +193,7 @@ class Archive:
         start_snapshots={}
         by_step={}
         allowed={
-            "STEP_STARTED": (0, {"from_step","contract","start_state"}),
+            "STEP_STARTED": (0, {"from_step","contract","start_state","actions"}),
             "MOVE": (1, {"x","y","proposed_x","proposed_y"}),
             "BOUNDARY_CLIP": (2, {"x","y","corrections"}),
             "REPLICATION_REPLAY": (3, {"request_id"}),
@@ -237,6 +237,16 @@ class Archive:
                     return False
                 if start_state.step != e["data"]["from_step"]:
                     return False
+                actions=e["data"]["actions"]
+                if not isinstance(actions,dict) or set(actions)!={str(i) for i in start_state.vertices}:
+                    return False
+                parsed_actions={}
+                for key,value in actions.items():
+                    if not isinstance(key,str) or not key.isdecimal() or str(int(key))!=key or not isinstance(value,list) or len(value)!=2 or any(type(z) is not int for z in value):
+                        return False
+                    parsed_actions[int(key)]=(value[0],value[1])
+                    if any(abs(z)>self.contract.A_MAX_Q for z in value):
+                        return False
                 if step>1 and state_to_dict(start_state)!=snapshots.get(step-1):
                     return False
                 start_snapshots[step]=state_to_dict(start_state)
@@ -295,6 +305,19 @@ class Archive:
                     try:
                         cx,cy,clipped,corrections=clip_to_radius(data["proposed_x"],data["proposed_y"],self.contract.R_MAX_Q)
                     except (TypeError,ValueError,ArithmeticError):
+                        return False
+                    action_map=start_snapshots.get(step+"__actions",{})
+                    if i not in action_map:
+                        return False
+                    sx,sy=action_map[i]
+                    for j in sorted(special_ids(start_vertices)):
+                        if i==j:
+                            continue
+                        d=dist2(start_vertices[i],start_vertices[j])
+                        weight=0 if d>=self.contract.h2_twice else self.contract.Q-round_even_div(self.contract.Q*d,self.contract.h2_twice)
+                        sx+=round_even_div(weight*action_map[j][0],2*self.contract.Q)
+                        sy+=round_even_div(weight*action_map[j][1],2*self.contract.Q)
+                    if (data["proposed_x"],data["proposed_y"])!=(start_vertices[i].x+sx,start_vertices[i].y+sy):
                         return False
                     if (cx,cy)!=(data["x"],data["y"]):
                         return False
@@ -369,6 +392,16 @@ class Archive:
                 return False
             if added_events != (state.edges-start_state.edges) or removed_events != (start_state.edges-state.edges):
                 return False
+            # Recompute every hysteretic edge transition from the two snapshots.
+            all_ids=sorted(state_vertices)
+            for ix,a in enumerate(all_ids):
+                for b in all_ids[ix+1:]:
+                    edge=(a,b)
+                    d=dist2(state_vertices[a],state_vertices[b])
+                    was_present=edge in start_state.edges
+                    should_be_present=(d<self.contract.D_REMOVE_Q**2) if was_present else (d<=self.contract.D_ADD_Q**2)
+                    if (edge in state.edges)!=should_be_present:
+                        return False
             # Request ledger changes and replication events must be one-to-one.
             event_request_ids=[e["data"]["request_id"] for e in accepted+rejected]
             if len(event_request_ids)!=len(set(event_request_ids)):
@@ -468,7 +501,7 @@ class Engine:
             if not isinstance(r,ReplicationRequest) or not isinstance(r.request_id,str) or not r.request_id or any(type(z) is not int for z in (r.parent_id,r.child_x,r.child_y)): raise ValueError("invalid replication request")
             if r.request_id in requests and requests[r.request_id].payload()!=r.payload(): raise ValueError("request ID conflict")
             requests[r.request_id]=r
-        w=start.clone(); n=start.step+1; ev=[{"step":n,"phase":0,"type":"STEP_STARTED","data":{"from_step":start.step,"contract":contract_to_dict(c),"start_state":state_to_dict(start)}}]
+        w=start.clone(); n=start.step+1; ev=[{"step":n,"phase":0,"type":"STEP_STARTED","data":{"from_step":start.step,"contract":contract_to_dict(c),"start_state":state_to_dict(start),"actions":{str(i):list(inputs.direct_actions[i]) for i in sorted(start.vertices)}}}]
         specials=special_ids(start.vertices); proposals={}
         for i in sorted(start.vertices):
             sx,sy=inputs.direct_actions[i]
