@@ -45,6 +45,10 @@ class HeldoutBenchmarkTests(unittest.TestCase):
         self.assertLessEqual(low, 0.3)
         self.assertGreaterEqual(high, 0.3)
         self.assertEqual(wilson_interval(0, 0), [0.0, 1.0])
+        self.assertEqual(wilson_interval(0, 200)[0], 0.0)
+        self.assertEqual(wilson_interval(200, 200)[1], 1.0)
+        with self.assertRaises(ValueError):
+            wilson_interval(201, 200)
 
     def test_benchmark_reports_uncertainty_and_attack_conditions(self):
         result = run_benchmark(trials=12, seed=77, attack_rates=(0.0, 0.25))
