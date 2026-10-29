@@ -19,10 +19,10 @@ The Python API is a software boundary rather than a security sandbox against a m
 - Input domain: integers -16 through 16.
 - Training split: integers -8 through 8.
 - Held-out split: integers -16 through -9 and 9 through 16.
-- Target families: parity, threshold, negative/non-negative partition, and deterministic seeded-noise control.
+- Target families: parity, threshold, negative/non-negative partition, deterministic seeded-noise control, and an adversarial held-out-flip target that agrees with parity on training inputs but reverses labels on the held-out region.
 - Grammar, maximum syntax cost, candidate budget, and minimum distinct input count are explicit configuration.
 - Default seed: `20261030`.
-- Baselines: fixed zero, fixed one, identity expression where executable under the binary-output contract, and seeded random-order bounded candidate search selected using training labels only.
+- Baselines: fixed zero, fixed one, identity expression where executable under the binary-output contract, and seeded random-order bounded candidate search selected using training labels only. The random-order search has the same finite grammar and budget class as the primary enumerator; it is a search-order diagnostic, not an independent model family.
 - Metrics: training error when available, held-out error/count, abstentions, counterexample records, candidate identity, data digests, and baseline scores.
 - The report is JSON serializable and includes a SHA-256 digest over the report payload before the digest field is added.
 
@@ -41,7 +41,7 @@ Do not declare Gate C scientifically passed solely because CI is green. Inspect 
 - the train/test overlap is empty;
 - the seed, budgets, grammar version, and dataset digests are recorded;
 - the frozen candidate identity is recorded before scoring;
-- a held-out contradiction remains visible and rejects the candidate rather than triggering silent repair;
+- the adversarial held-out-flip trial produces explicit contradictions and rejects the frozen parity candidate rather than triggering silent repair;
 - abstention is reported, not counted as a correct prediction;
 - all baseline results and per-family outcomes are preserved;
 - repeated runs with the same configuration produce identical report objects.
