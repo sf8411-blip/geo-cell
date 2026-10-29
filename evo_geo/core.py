@@ -1,8 +1,34 @@
 """Phase 0 deterministic integer-lattice engine; no runtime dependencies."""
 from __future__ import annotations
-import hashlib, json, os, tempfile
+import hashlib, json, os, tempfile, contextlib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+@contextlib.contextmanager
+def _exclusive_path_lock(lock_path):
+    """Advisory process lock; lock file is persistent and must not be deleted by callers."""
+    lock_path = Path(lock_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "a+b") as lock_file:
+        if os.name == "nt":
+            import msvcrt
+            lock_file.seek(0, os.SEEK_END)
+            if lock_file.tell() == 0:
+                lock_file.write(b"\\0"); lock_file.flush()
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 def canonical_bytes(obj):
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
@@ -185,6 +211,28 @@ class Archive:
         sealed=self.prepare_bundle(bundle); self.commit_bundle(sealed); return sealed
     def checkpoint(self,state):
         payload=state_to_dict(state); cp={"step":state.step,"state":payload,"state_hash":sha256_hex(canonical_bytes(payload))}; self.checkpoints[state.step]=cp; return cp
+    def verify_genesis_anchor(self, expected_sha256):
+        """Verify the first recorded start-state against an externally trusted SHA-256 anchor.
+
+        The expected digest must arrive through a separately trusted channel. This method
+        binds the archive to that digest; it does not itself establish who created the anchor.
+        """
+        if (not isinstance(expected_sha256, str) or len(expected_sha256) != 64
+                or any(ch not in "0123456789abcdef" for ch in expected_sha256)):
+            return False
+        if not self.verify() or not self.events:
+            return False
+        first = next((e for e in self.events if e.get("type") == "STEP_STARTED"), None)
+        if first is None:
+            return False
+        try:
+            genesis = first["data"]["start_state"]
+            state_from_dict(genesis)
+            actual = sha256_hex(canonical_bytes(genesis))
+        except (KeyError, TypeError, ValueError):
+            return False
+        return actual == expected_sha256
+
     def verify(self):
         if (not isinstance(self.contract, Contract) or not isinstance(self.checkpoints, dict)
                 or not verify_chain(self.events)):
@@ -482,24 +530,48 @@ class Archive:
             if state.step!=step or snapshots.get(step)!=state_to_dict(state):
                 return False
         return True
-    def save_atomic(self,path):
-        dest=Path(path); dest.parent.mkdir(parents=True,exist_ok=True)
-        payload={"schema_version":2,"contract":contract_to_dict(self.contract),"events":self.events,"checkpoints":{str(k):v for k,v in sorted(self.checkpoints.items())}}
-        fd,tmp=tempfile.mkstemp(prefix="."+dest.name+".",suffix=".tmp",dir=dest.parent)
-        try:
-            with os.fdopen(fd,"wb") as f: f.write(canonical_bytes(payload)); f.flush(); os.fsync(f.fileno())
-            os.replace(tmp,dest)
-            # Persist the directory entry after the atomic rename on POSIX.
-            # If this fsync fails, the new file may already be visible; callers
-            # must treat durability as uncertain and re-open/verify the archive.
-            if os.name == "posix":
-                dir_fd=os.open(dest.parent,os.O_RDONLY)
-                try: os.fsync(dir_fd)
-                finally: os.close(dir_fd)
-        except BaseException:
-            try: os.unlink(tmp)
-            except FileNotFoundError: pass
-            raise
+    def save_atomic(self, path, expected_current_sha256=None):
+        """Atomically persist under a process lock.
+
+        If expected_current_sha256 is provided, compare-and-swap semantics reject stale
+        writers. The digest is over the exact existing file bytes; use None only when
+        intentionally allowing an unconditional replacement. A missing destination is
+        represented by the literal expected value "missing".
+        """
+        dest = Path(path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"schema_version": 2, "contract": contract_to_dict(self.contract),
+                   "events": self.events, "checkpoints": {str(k): v for k, v in sorted(self.checkpoints.items())}}
+        lock_path = dest.with_name(dest.name + ".lock")
+        with _exclusive_path_lock(lock_path):
+            if expected_current_sha256 is not None:
+                if dest.exists():
+                    current = sha256_hex(dest.read_bytes())
+                else:
+                    current = "missing"
+                if current != expected_current_sha256:
+                    raise RuntimeError("archive changed since it was read; refusing stale overwrite")
+            fd, tmp = tempfile.mkstemp(prefix="." + dest.name + ".", suffix=".tmp", dir=dest.parent)
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(canonical_bytes(payload))
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp, dest)
+                # Persist the directory entry after the atomic rename on POSIX.
+                # Failure here means new content may be visible but crash durability is uncertain.
+                if os.name == "posix":
+                    dir_fd = os.open(dest.parent, os.O_RDONLY)
+                    try:
+                        os.fsync(dir_fd)
+                    finally:
+                        os.close(dir_fd)
+            except BaseException:
+                try:
+                    os.unlink(tmp)
+                except FileNotFoundError:
+                    pass
+                raise
     @classmethod
     def load(cls,path):
         d=json.loads(Path(path).read_text(encoding="utf-8"))
