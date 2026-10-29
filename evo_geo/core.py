@@ -350,7 +350,10 @@ class Archive:
             if state.next_vertex_id!=expected_id:
                 return False
             # Events must exactly account for special-status and edge deltas.
-            special_events={e["entity_ids"][0]:e["data"]["special"] for e in items if e["type"]=="SPECIAL_STATUS_CHANGE"}
+            special_rows=[e for e in items if e["type"]=="SPECIAL_STATUS_CHANGE"]
+            special_events={e["entity_ids"][0]:e["data"]["special"] for e in special_rows}
+            if len(special_events)!=len(special_rows):
+                return False
             expected_special={}
             for i,v in state_vertices.items():
                 old_special=start_vertices[i].special if i in start_vertices else False
@@ -358,8 +361,12 @@ class Archive:
                     expected_special[i]=v.special
             if special_events!=expected_special:
                 return False
-            added_events={tuple(e["entity_ids"]) for e in items if e["type"]=="EDGE_ADD"}
-            removed_events={tuple(e["entity_ids"]) for e in items if e["type"]=="EDGE_REMOVE"}
+            added_rows=[e for e in items if e["type"]=="EDGE_ADD"]
+            removed_rows=[e for e in items if e["type"]=="EDGE_REMOVE"]
+            added_events={tuple(e["entity_ids"]) for e in added_rows}
+            removed_events={tuple(e["entity_ids"]) for e in removed_rows}
+            if len(added_events)!=len(added_rows) or len(removed_events)!=len(removed_rows):
+                return False
             if added_events != (state.edges-start_state.edges) or removed_events != (start_state.edges-state.edges):
                 return False
             # Request ledger changes and replication events must be one-to-one.
