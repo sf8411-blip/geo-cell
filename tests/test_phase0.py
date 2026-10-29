@@ -227,6 +227,30 @@ class AdversarialPhase0Tests(unittest.TestCase):
         a.events=self.reseal(bodies)
         self.assertFalse(a.verify())
 
+    def test_rehashed_move_and_snapshot_forgery_rejected(self):
+        e=Engine()
+        e.step(zero(e.state))
+        bodies=[dict(x) for x in e.archive.events]
+        move=next(x for x in bodies if x.get("type")=="MOVE" and x.get("entity_ids")==[1])
+        move["data"]["proposed_x"] += 1
+        move["data"]["x"] += 1
+        commit=next(x for x in bodies if x.get("type")=="STEP_COMMITTED")
+        row=next(x for x in commit["data"]["state"]["vertices"] if x["id"]==1)
+        row["x"] += 1
+        a=Archive()
+        a.events=self.reseal(bodies)
+        self.assertFalse(a.verify())
+
+    def test_rehashed_action_map_tamper_rejected(self):
+        e=Engine()
+        e.step(zero(e.state))
+        bodies=[dict(x) for x in e.archive.events]
+        start=next(x for x in bodies if x.get("type")=="STEP_STARTED")
+        start["data"]["actions"]["1"]=[1,0]
+        a=Archive()
+        a.events=self.reseal(bodies)
+        self.assertFalse(a.verify())
+
     def test_rehashed_history_missing_edge_event_rejected(self):
         e=Engine()
         e.step(zero(e.state))
