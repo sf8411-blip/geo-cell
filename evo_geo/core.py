@@ -186,7 +186,8 @@ class Archive:
     def checkpoint(self,state):
         payload=state_to_dict(state); cp={"step":state.step,"state":payload,"state_hash":sha256_hex(canonical_bytes(payload))}; self.checkpoints[state.step]=cp; return cp
     def verify(self):
-        if not isinstance(self.contract, Contract) or not verify_chain(self.events):
+        if (not isinstance(self.contract, Contract) or not isinstance(self.checkpoints, dict)
+                or not verify_chain(self.events)):
             return False
         previous_step=0
         snapshots={}
@@ -562,6 +563,7 @@ class Engine:
                 accepted_children.add(child_id)
             else:
                 if (set(result)!={"status","reason","payload"} or
+                        not isinstance(result["reason"],str) or
                         result["reason"] not in allowed_rejection_reasons):
                     raise ValueError("invalid rejected request result")
     def step(self,inputs):
