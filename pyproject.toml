@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evo-geo"
+version = "0.1.0"
+description = "Deterministic integer-lattice geometric substrate"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["coverage>=7.4"]
+
+[project.scripts]
+evo-geo = "evo_geo.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["evo_geo*"]
