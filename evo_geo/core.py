@@ -211,7 +211,7 @@ class Archive:
             ):
                 return False
             step,phase,kind=e.get("step"),e.get("phase"),e.get("type")
-            if type(step) is not int or step<=0 or type(phase) is not int or kind not in allowed:
+            if type(step) is not int or step<=0 or type(phase) is not int or type(kind) is not str or kind not in allowed:
                 return False
             expected_phase,keys=allowed[kind]
             if phase!=expected_phase or not isinstance(e.get("data"),dict) or set(e["data"])!=keys:
