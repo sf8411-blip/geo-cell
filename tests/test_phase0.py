@@ -1,6 +1,6 @@
 import tempfile, unittest
 from pathlib import Path
-from evo_geo import Archive, Contract, Engine, ReplicationRequest, StepInputs, initial_state
+from evo_geo import Archive, Contract, Engine, ReplicationRequest, StepInputs, genesis_anchor_sha256, initial_state
 from evo_geo.core import canonical_bytes, clip_to_radius, isqrt, round_even_div, state_from_dict, state_to_dict, verify_chain
 
 def zero(s): return StepInputs({i:(0,0) for i in s.vertices},[])
@@ -479,9 +479,9 @@ class TrustConcurrencyHardeningTests(unittest.TestCase):
         import hashlib
         e = Engine()
         e.step(zero(e.state))
-        genesis = next(x for x in e.archive.events if x["type"] == "STEP_STARTED")["data"]["start_state"]
-        expected = hashlib.sha256(canonical_bytes(genesis)).hexdigest()
+        expected = genesis_anchor_sha256(initial_state(), e.archive.contract)
         self.assertTrue(e.archive.verify_genesis_anchor(expected))
+        self.assertNotEqual(expected, genesis_anchor_sha256(initial_state(), Contract(spec_version="other-contract")))
         self.assertFalse(e.archive.verify_genesis_anchor("0" * 64))
         self.assertFalse(e.archive.verify_genesis_anchor("not-a-digest"))
         # An archive without a recorded step has no genesis snapshot to anchor.
