@@ -30,7 +30,7 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Produce machine-readable benchmark report
         run: |
-          python -c "import json; from evo_geo.gate_c_benchmark import run_benchmark; json.dump(run_benchmark(), open('gate-c-report.json', 'w', encoding='utf-8'), indent=2, sort_keys=True)"
+          python -c "import json; from evo_geo.gate_c_benchmark import run_seed_sweep; json.dump(run_seed_sweep(), open('gate-c-report.json', 'w', encoding='utf-8'), indent=2, sort_keys=True)"
       - name: Upload Gate C report
         uses: actions/upload-artifact@v4
         with:
