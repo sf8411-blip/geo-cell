@@ -190,9 +190,10 @@ class Archive:
             return False
         previous_step=0
         snapshots={}
+        start_snapshots={}
         by_step={}
         allowed={
-            "STEP_STARTED": (0, {"from_step","contract"}),
+            "STEP_STARTED": (0, {"from_step","contract","start_state"}),
             "MOVE": (1, {"x","y","proposed_x","proposed_y"}),
             "BOUNDARY_CLIP": (2, {"x","y","corrections"}),
             "REPLICATION_REPLAY": (3, {"request_id"}),
@@ -230,8 +231,15 @@ class Archive:
                 try:
                     if contract_from_dict(e["data"]["contract"]) != self.contract:
                         return False
-                except (TypeError,ValueError):
+                    start_state=state_from_dict(e["data"]["start_state"])
+                    Engine(state=start_state,contract=self.contract)
+                except (TypeError,ValueError,KeyError):
                     return False
+                if start_state.step != e["data"]["from_step"]:
+                    return False
+                if step>1 and state_to_dict(start_state)!=snapshots.get(step-1):
+                    return False
+                start_snapshots[step]=state_to_dict(start_state)
                 by_step[step]=[]
             elif step not in by_step:
                 return False
@@ -274,7 +282,9 @@ class Archive:
             if phases!=sorted(phases) or sum(e["type"]=="STEP_STARTED" for e in items)!=1 or sum(e["type"]=="STEP_COMMITTED" for e in items)!=1:
                 return False
             state=state_from_dict(snapshots[step])
+            start_state=state_from_dict(start_snapshots[step])
             state_vertices=state.vertices
+            start_vertices=start_state.vertices
             moves={}
             for e in items:
                 kind=e["type"]; data=e["data"]; ids=e.get("entity_ids",[])
@@ -315,9 +325,57 @@ class Archive:
                 elif kind=="REPLICATION_REPLAY":
                     if data["request_id"] not in state.processed_requests:
                         return False
-            # Every vertex present in the committed state must have moved or been created by an accepted replication.
-            created={e["data"].get("child_id") for e in items if e["type"]=="REPLICATION_ACCEPT"}
-            if set(moves)!=(set(state_vertices)-created):
+            # Check transition completeness against the recorded start snapshot.
+            accepted=[e for e in items if e["type"]=="REPLICATION_ACCEPT"]
+            rejected=[e for e in items if e["type"]=="REPLICATION_REJECT"]
+            replays=[e for e in items if e["type"]=="REPLICATION_REPLAY"]
+            created={e["data"].get("child_id") for e in accepted}
+            if set(moves)!=set(start_vertices) or set(state_vertices)!=(set(start_vertices)|created):
+                return False
+            if state.step != start_state.step+1:
+                return False
+            for i,v in start_vertices.items():
+                if i not in state_vertices:
+                    return False
+            # Every accepted child must match its request payload and IDs must be monotonic.
+            expected_id=start_state.next_vertex_id
+            for e in accepted:
+                data=e["data"]; payload=data["payload"]; child_id=data["child_id"]
+                if child_id!=expected_id or child_id not in state_vertices:
+                    return False
+                child=state_vertices[child_id]
+                if (child.x,child.y)!=(payload["child_x"],payload["child_y"]):
+                    return False
+                expected_id+=1
+            if state.next_vertex_id!=expected_id:
+                return False
+            # Events must exactly account for special-status and edge deltas.
+            special_events={e["entity_ids"][0]:e["data"]["special"] for e in items if e["type"]=="SPECIAL_STATUS_CHANGE"}
+            expected_special={}
+            for i,v in state_vertices.items():
+                old_special=start_vertices[i].special if i in start_vertices else False
+                if old_special!=v.special:
+                    expected_special[i]=v.special
+            if special_events!=expected_special:
+                return False
+            added_events={tuple(e["entity_ids"]) for e in items if e["type"]=="EDGE_ADD"}
+            removed_events={tuple(e["entity_ids"]) for e in items if e["type"]=="EDGE_REMOVE"}
+            if added_events != (state.edges-start_state.edges) or removed_events != (start_state.edges-state.edges):
+                return False
+            # Request ledger changes and replication events must be one-to-one.
+            event_request_ids=[e["data"]["request_id"] for e in accepted+rejected]
+            if len(event_request_ids)!=len(set(event_request_ids)):
+                return False
+            old_requests=start_state.processed_requests
+            new_requests=state.processed_requests
+            if any(new_requests.get(rid)!=result for rid,result in old_requests.items()):
+                return False
+            new_ids=set(new_requests)-set(old_requests)
+            if new_ids!=set(event_request_ids):
+                return False
+            if any(e["data"]["request_id"] not in old_requests for e in replays):
+                return False
+            if any(e["data"]["request_id"] in old_requests for e in accepted+rejected):
                 return False
         for step,cp in self.checkpoints.items():
             if type(step) is not int or not isinstance(cp,dict) or set(cp)!={"step","state","state_hash"}:
@@ -403,7 +461,7 @@ class Engine:
             if not isinstance(r,ReplicationRequest) or not isinstance(r.request_id,str) or not r.request_id or any(type(z) is not int for z in (r.parent_id,r.child_x,r.child_y)): raise ValueError("invalid replication request")
             if r.request_id in requests and requests[r.request_id].payload()!=r.payload(): raise ValueError("request ID conflict")
             requests[r.request_id]=r
-        w=start.clone(); n=start.step+1; ev=[{"step":n,"phase":0,"type":"STEP_STARTED","data":{"from_step":start.step,"contract":contract_to_dict(c)}}]
+        w=start.clone(); n=start.step+1; ev=[{"step":n,"phase":0,"type":"STEP_STARTED","data":{"from_step":start.step,"contract":contract_to_dict(c),"start_state":state_to_dict(start)}}]
         specials=special_ids(start.vertices); proposals={}
         for i in sorted(start.vertices):
             sx,sy=inputs.direct_actions[i]
