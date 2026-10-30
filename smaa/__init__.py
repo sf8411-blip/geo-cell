@@ -1,6 +1,7 @@
 """SMAA: auditable functional self-modeling, not a consciousness claim."""
 from __future__ import annotations
 import hashlib, json
+from multiprocessing import get_context
 from dataclasses import asdict, dataclass, field
 from typing import Any
 GENESIS="0"*64
@@ -82,6 +83,63 @@ def normalized_prediction_error(predicted,actual,weights=None):
         err=min(1.0,abs(float(a)-float(b))/max(1.0,abs(float(b)))) if isinstance(a,(int,float)) and isinstance(b,(int,float)) else (0.0 if a==b else 1.0)
         total+=weights.get(k,1.0)*err
     return total/denom
+
+def _isolated_cell_worker(conn, cell_id, declared_capabilities):
+    """Child process owns observations; only allow-listed summaries cross its pipe."""
+    private_observations=[]
+    unknowns=[]
+    try:
+        while True:
+            msg=conn.recv()
+            op=msg.get("op")
+            if op=="observe":
+                private_observations.append(msg["observation"])
+                conn.send({"ok":True})
+            elif op=="report_unknown":
+                value=str(msg["value"])
+                if value not in unknowns: unknowns.append(value)
+                conn.send({"ok":True})
+            elif op=="summary":
+                conn.send({"cell_id":cell_id,"capability_names":list(declared_capabilities),"reported_unknowns":list(unknowns)})
+            elif op=="shutdown":
+                conn.send({"ok":True}); break
+            else:
+                conn.send({"ok":False,"error":"unsupported operation"})
+    except EOFError:
+        pass
+    finally:
+        conn.close()
+
+class IsolatedCellProcess:
+    """Minimal per-cell process boundary; not an OS sandbox or hostile-code jail."""
+    def __init__(self, cell_id, capabilities=()):
+        if not cell_id: raise ValueError("cell_id required")
+        ctx=get_context("spawn")
+        parent,child=ctx.Pipe()
+        self._conn=parent
+        self._process=ctx.Process(target=_isolated_cell_worker,args=(child,cell_id,tuple(sorted(set(capabilities)))),daemon=True)
+        self._process.start(); child.close(); self.cell_id=cell_id
+    def _request(self,message):
+        if not self._process.is_alive(): raise RuntimeError("cell worker is not alive")
+        self._conn.send(message); return self._conn.recv()
+    def observe(self,observation):
+        if not isinstance(observation,dict): raise TypeError("observation must be a dictionary")
+        return self._request({"op":"observe","observation":observation})
+    def report_unknown(self,value):
+        return self._request({"op":"report_unknown","value":str(value)})
+    def public_summary(self):
+        result=self._request({"op":"summary"})
+        if set(result)!={"cell_id","capability_names","reported_unknowns"}: raise RuntimeError("worker violated summary schema")
+        return result
+    def close(self):
+        if self._process.is_alive():
+            try: self._request({"op":"shutdown"})
+            finally: self._process.join(timeout=2)
+        if self._process.is_alive(): self._process.terminate(); self._process.join(timeout=2)
+        self._conn.close()
+    def __enter__(self): return self
+    def __exit__(self,*_): self.close()
+
 class SMAAEngine:
     """Network-level reference engine. Private observations are not accepted by its API."""
     def __init__(self,network_id):
@@ -135,6 +193,13 @@ class SMAAEngine:
         if not reason.strip(): raise ValueError("revision requires evidence-based reason")
         old=self.model.version; self.model.version+=1; self.model.model_assumptions=list(assumptions); self.model.last_revision_reason=reason
         self._event("self_model_revised",actor_id,{"from_version":old,"to_version":self.model.version,"reason":reason,"assumptions":assumptions})
+    def choose_action(self, task_name, minimum_success_rate=0.75):
+        """A minimal causal policy: the self-model's tested capability gates action vs abstention."""
+        if not 0 <= minimum_success_rate <= 1: raise ValueError("threshold must be in [0,1]")
+        cap=self.model.capabilities.get(task_name)
+        decision="attempt" if cap is not None and cap.trials>0 and cap.tested_success_rate>=minimum_success_rate else "abstain"
+        self._event("self_model_policy_decision","network",{"task":task_name,"decision":decision,"threshold":minimum_success_rate,"capability_present":cap is not None})
+        return decision
     def identity_report(self):
         return {"network_id":self.model.network_id,"model_version":self.model.version,"active_cells":sorted(k for k,v in self.model.cells.items() if v.active),"inactive_cells":sorted(k for k,v in self.model.cells.items() if not v.active),"capabilities":sorted(self.model.capabilities),"known_claims":sorted(self.model.knowledge),"unknowns":sorted(self.model.unknowns)}
     def social_knowledge_view(self,viewer_cell_id):
@@ -155,4 +220,4 @@ def run_reference_suite():
     e.revise_self_model("prediction mismatch in active cell count",["active membership can change after intervention"]); t8=e.model.version==2
     probs=[.8,.7,.2,.1]; outcomes=[1,1,0,0]
     return {"suite":"SMAA-reference-0.1","tests":{"self_other":t1,"agency_attribution":t2,"identity_continuity":t3,"limitation_tracking":t4,"metacognitive_recording":t5,"self_prediction_error":t6,"social_knowledge_provenance":t7,"structural_self_revision":t8},"metrics":{"brier_score":brier_score(probs,outcomes),"ece":expected_calibration_error(probs,outcomes),"self_prediction_error":err},"audit":e.audit()}
-__all__=["SMAAEngine","EventLedger","Capability","CellRecord","KnowledgeClaim","Prediction","SelfModel","brier_score","expected_calibration_error","normalized_prediction_error","run_reference_suite"]
+__all__=["SMAAEngine","IsolatedCellProcess","EventLedger","Capability","CellRecord","KnowledgeClaim","Prediction","SelfModel","brier_score","expected_calibration_error","normalized_prediction_error","run_reference_suite"]
