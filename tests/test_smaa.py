@@ -1,5 +1,5 @@
 import unittest
-from smaa import SMAAEngine, Capability, KnowledgeClaim, Prediction, EventLedger, brier_score, expected_calibration_error, run_reference_suite
+from smaa import IsolatedCellProcess, SMAAEngine, Capability, KnowledgeClaim, Prediction, EventLedger, brier_score, expected_calibration_error, run_reference_suite
 class SMAATests(unittest.TestCase):
  def test_eight_reference_probes(self):
   r=run_reference_suite(); self.assertTrue(all(r["tests"].values()),r["tests"]); self.assertTrue(r["audit"]["ledger_valid"])
@@ -25,4 +25,22 @@ class SMAATests(unittest.TestCase):
   with self.assertRaises(ValueError): Capability("x",1.2,3)
  def test_knowledge_owner_required(self):
   with self.assertRaises(ValueError): SMAAEngine("n").add_knowledge_claim(KnowledgeClaim("k","p","missing"),"missing")
-if __name__=="__main__": unittest.main()
+
+ def test_self_model_changes_action_selection(self):
+  e=SMAAEngine("n")
+  self.assertEqual(e.choose_action("geometry"),"abstain")
+  e.add_capability(Capability("geometry",.9,20,("blind-test-1",)))
+  self.assertEqual(e.choose_action("geometry"),"attempt")
+  e.model.capabilities.pop("geometry")
+  self.assertEqual(e.choose_action("geometry"),"abstain")
+ def test_isolated_cell_only_exports_allowlisted_summary(self):
+  with IsolatedCellProcess("cell-private",["geometry"]) as cell:
+   cell.observe({"raw_observation":"secret-data","hidden_label":17})
+   cell.report_unknown("unseen-shape")
+   summary=cell.public_summary()
+   self.assertEqual(summary["cell_id"],"cell-private")
+   self.assertEqual(summary["capability_names"],["geometry"])
+   self.assertEqual(summary["reported_unknowns"],["unseen-shape"])
+   self.assertNotIn("raw_observation",summary)
+   self.assertNotIn("hidden_label",summary)
+\nif __name__=="__main__": unittest.main()
