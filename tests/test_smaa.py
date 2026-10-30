@@ -43,4 +43,5 @@ class SMAATests(unittest.TestCase):
    self.assertEqual(summary["reported_unknowns"],["unseen-shape"])
    self.assertNotIn("raw_observation",summary)
    self.assertNotIn("hidden_label",summary)
-\nif __name__=="__main__": unittest.main()
+
+if __name__=="__main__": unittest.main()
