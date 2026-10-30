@@ -6,14 +6,14 @@ SMAA is a vertical subsystem across the seven functional layers of the host digi
 - Self-state: versioned network identity, member registry, capability evidence, knowledge claims, resources, unknowns and assumptions.
 - Identity continuity: stable network identifier plus join/deactivation history and membership reconstruction.
 - Agency provenance: append-only events record actor, event type, tick and payload. Actor attribution is not proof of external physical causation.
-- Workspace boundary: public-summary API uses an allow-list and rejects raw observations, private memory, hidden labels and unknown fields.
+- Workspace boundary: a spawned process per cell stores private observations and exports only a small allow-listed summary; the network API also rejects raw observations, private memory, hidden labels and unknown fields.
 - Metacognition: forecast records, Brier components, aggregate Brier score and expected calibration error.
 - Autobiographical history: canonical JSON SHA-256 hash-chained event ledger.
 - Social self-model: claims retain owner, evidence references and verification status.
 - Self-revision: reason-bearing, versioned revisions with audit events.
 
 ## Trust limits
-The information boundary is API-level, not OS-level isolation. A malicious caller with direct Python object access can inspect memory. Production cells require separate processes/containers, authenticated schema-validated transport and resource quotas. Hash chaining detects modification relative to a trusted head; it does not authenticate authorship or prevent complete chain rewriting. Actor labels are caller assertions until authenticated.
+The reference includes one spawned OS process per cell, so the parent receives only explicit summary messages rather than the child observation store. This is process separation, not a hardened sandbox: a compromised worker can still use the host account's permissions and resources. Production requires OS/container sandboxing, authenticated schema-validated transport, quotas and threat-model-specific controls. Hash chaining detects modification relative to a trusted head; it does not authenticate authorship or prevent complete chain rewriting. Actor labels are caller assertions until authenticated.
 
 ## Prediction limits
 predict_state is a transparent baseline, not a trained or discovered model. It reports registered state and action metadata. Error probes validate comparison bookkeeping, not general predictive competence.
@@ -25,8 +25,8 @@ These are executable software probes, not evidence of human-like consciousness.
 
 ## Stage status
 - SMAA-0 schemas, event ledger and stable IDs: implemented.
-- SMAA-1 local self-state: partial; current reference engine is network-level, not isolated cell processes.
-- SMAA-2 self/other and actor attribution: API/event-level implementation; causal intervention benchmark remains future work.
+- SMAA-1 local self-state: partial; worker processes hold private observations, while the full per-cell local self-model and durable memory lifecycle remain future work.
+- SMAA-2 self/other and actor attribution: process/API/event-level implementation; a minimal self-model-gated attempt/abstain policy is included; causal held-out intervention benchmark remains future work.
 - SMAA-3 history/continuity: in-memory event history; durable persistence remains future work.
 - SMAA-4 self-prediction/error: baseline bookkeeping; learned predictive model remains future work.
 - SMAA-5 metacognition/calibration: metrics and forecast records implemented; large-sample validation remains future work.
